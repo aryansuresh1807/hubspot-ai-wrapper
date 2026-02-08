@@ -1,0 +1,32 @@
+# Local development: frontend + backend
+# Run from repo root: docker-compose up --build
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - FRONTEND_URL=http://localhost:3000
+    # Uncomment if using local Supabase or DB:
+    # volumes:
+    #   - ./backend:/app
+
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules  # avoid overwriting host node_modules
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NODE_ENV=development
+    command: sh -c "npm install && npm run dev"
+    depends_on:
+      - backend

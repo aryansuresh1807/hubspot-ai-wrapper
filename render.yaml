@@ -1,0 +1,15 @@
+# Render blueprint - Backend service
+# Deploy from repo root; set root directory to 'backend' in Render dashboard if needed
+# Or use this file with Render Blueprint deploy
+
+services:
+  - type: web
+    name: hubspot-ai-wrapper-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.7"
+    # Add env vars in Render dashboard: SUPABASE_*, HUBSPOT_*, OPENAI_*, FRONTEND_URL
