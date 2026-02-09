@@ -273,9 +273,9 @@ export default function ActivityPage(): React.ReactElement {
   const CHAR_LIMIT = 10000;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[2fr_3fr] gap-6 lg:gap-8">
-      {/* LEFT COLUMN - stacks on mobile, 40% on desktop */}
-      <div className="flex flex-col gap-6 w-full lg:max-w-[40%]">
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8">
+      {/* LEFT COLUMN - stacks on mobile, 5/12 (~40%) on desktop */}
+      <div className="flex flex-col gap-6 lg:col-span-5">
         {/* 1. Note Editor */}
         <Card>
           <CardHeader>
@@ -462,8 +462,8 @@ export default function ActivityPage(): React.ReactElement {
         </Card>
       </div>
 
-      {/* RIGHT COLUMN - 60%, scrollable */}
-      <div className="flex flex-col gap-6 overflow-y-auto lg:max-h-[calc(100vh-8rem)]">
+      {/* RIGHT COLUMN - 7/12 (~60%) on desktop, scrollable */}
+      <div className="flex flex-col gap-6 overflow-y-auto lg:col-span-7 lg:max-h-[calc(100vh-8rem)]">
         {/* 1. Error Banner */}
         {showErrorBanner && (
           <Card className="border-status-at-risk/50 bg-status-at-risk/10">

@@ -98,7 +98,7 @@ const ActivityCard = React.forwardRef<HTMLDivElement, ActivityCardProps>(
         className={cn(
           'cursor-pointer transition-shadow duration-200',
           'hover:shadow-card-hover',
-          isSelected && 'ring-2 ring-status-active ring-offset-2',
+          isSelected ? 'border-2 border-status-active' : 'border-2 border-border',
           className
         )}
       >

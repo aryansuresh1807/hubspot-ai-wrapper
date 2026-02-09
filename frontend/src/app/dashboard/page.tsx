@@ -13,6 +13,7 @@ import {
   ArrowUpDown,
   ClipboardList,
   SearchX,
+  User,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -649,11 +650,11 @@ export default function DashboardPage(): React.ReactElement {
         </DialogContent>
       </Dialog>
 
-      {/* Responsive: mobile stack, tablet 2-col, desktop 12-col grid */}
-      <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-12">
-        {/* Left panel - Activity cards (6 cols on desktop) */}
-        <section className="flex flex-col min-h-0 md:min-h-0 lg:min-h-[calc(100vh-12rem)] lg:col-span-6">
-          <div className="flex flex-wrap items-center gap-2 mb-4">
+      {/* Responsive: mobile stack, tablet 2-col, desktop 12-col grid; only activity list scrolls on desktop */}
+      <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-12 lg:max-h-[calc(100vh-7rem)] lg:items-stretch">
+        {/* Left panel - Activity cards (6 cols on desktop), only this section scrolls */}
+        <section className="flex flex-col min-h-0 lg:col-span-6">
+          <div className="flex flex-wrap items-center gap-2 mb-4 shrink-0">
             <Button
               variant="outline"
               size="icon"
@@ -690,7 +691,7 @@ export default function DashboardPage(): React.ReactElement {
               </Link>
             </Button>
           </div>
-          <div className="flex-1 overflow-y-auto space-y-3 pr-2">
+          <div className="flex-1 min-h-0 overflow-y-auto space-y-3 pr-2">
             {isLoading ? (
               <>
                 {[1, 2, 3, 4, 5].map((i) => (
@@ -736,13 +737,13 @@ export default function DashboardPage(): React.ReactElement {
           </div>
         </section>
 
-        {/* Middle panel - Communication Summary (3 cols on desktop) */}
-        <section className="flex flex-col lg:col-span-3">
-          <Card className="flex-1 flex flex-col min-h-0">
-            <CardHeader className="pb-2">
+        {/* Middle panel - Communication Summary (3 cols on desktop), static no scroll */}
+        <section className="flex flex-col lg:col-span-3 lg:h-full lg:overflow-hidden">
+          <Card className="h-full overflow-hidden flex flex-col">
+            <CardHeader className="pb-2 shrink-0">
               <h2 className="text-lg font-semibold">Communication Summary</h2>
             </CardHeader>
-            <CardContent className="flex flex-col gap-4 flex-1 min-h-0">
+            <CardContent className="flex flex-col gap-4 flex-shrink-0">
               {isLoading ? (
                 <CommunicationSummarySkeleton />
               ) : selectedSummary ? (
@@ -798,12 +799,22 @@ export default function DashboardPage(): React.ReactElement {
           </Card>
         </section>
 
-        {/* Right panel - Contact preview (full width on tablet below the 2 cols, 3 cols on desktop) */}
-        <section className="flex flex-col md:col-span-2 lg:col-span-3">
+        {/* Right panel - Contact preview (full width on tablet below the 2 cols, 3 cols on desktop), static no scroll */}
+        <section className="flex flex-col md:col-span-2 lg:col-span-3 lg:h-full lg:overflow-hidden">
           {isLoading ? (
             <ContactPreviewSkeleton />
           ) : (
-            <ContactPreview contact={selectedContact} />
+            <Card className="h-full overflow-hidden flex flex-col">
+              <CardHeader className="pb-3 shrink-0">
+                <h2 className="text-lg font-semibold flex items-center gap-2">
+                  <User className="h-4 w-4 text-muted-foreground" />
+                  Contact Preview
+                </h2>
+              </CardHeader>
+              <CardContent className="flex-shrink-0">
+                <ContactPreview contact={selectedContact} />
+              </CardContent>
+            </Card>
           )}
         </section>
       </div>
