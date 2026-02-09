@@ -8,10 +8,26 @@ import {
   RotateCw,
   Mail,
   FileText,
+  User,
   UserPlus,
   Building2,
   Loader2,
+  Check,
+  Search,
+  MessageSquare,
+  CalendarIcon,
+  RefreshCw,
+  CheckCircle2,
+  Pencil,
+  ChevronDown,
 } from 'lucide-react';
+import { format } from 'date-fns';
+import { Calendar } from '@/components/ui/calendar';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -28,10 +44,14 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/shared/skeleton';
+import { StatusChip } from '@/components/crm/StatusChip';
+import { OpportunityIndicator } from '@/components/crm/OpportunityIndicator';
 import { cn } from '@/lib/utils';
 
 // ---------------------------------------------------------------------------
@@ -40,7 +60,7 @@ import { cn } from '@/lib/utils';
 
 type ProcessingStep = 'idle' | 'sent' | 'extracting' | 'ready';
 type UrgencyLevel = 'low' | 'medium' | 'high';
-type DraftTone = 'formal' | 'concise' | 'warm';
+type DraftTone = 'original' | 'formal' | 'concise' | 'warm';
 
 interface RecommendedTouchDate {
   id: string;
@@ -92,14 +112,55 @@ const MOCK_RECOMMENDED_DATES: RecommendedTouchDate[] = [
   },
 ];
 
-const MOCK_DRAFTS: Record<DraftTone, string> = {
+const MOCK_DRAFTS: Record<DraftTone, { text: string; confidence: number }> = {
+  original:
+    { text: 'Summary of our discussion: Q1 goals, proposal timeline, and next steps. Contact asked for formal proposal by end of week. Follow-up call scheduled for Wednesday.', confidence: 92 },
   formal:
-    'Dear [Contact], Thank you for your time on our recent call. Please find attached the proposal we discussed. I would welcome the opportunity to address any questions at your convenience. Best regards.',
+    { text: 'Dear [Contact], Thank you for your time on our recent call. Please find attached the proposal we discussed. I would welcome the opportunity to address any questions at your convenience. Best regards.', confidence: 88 },
   concise:
-    'Hi — Attaching the proposal from our call. Let me know if you have questions or want to schedule a follow-up.',
+    { text: 'Hi — Attaching the proposal from our call. Let me know if you have questions or want to schedule a follow-up.', confidence: 85 },
   warm:
-    'Hi [Contact], It was great connecting! As promised, here’s the proposal we talked about. Happy to jump on a quick call if anything needs clarification. Thanks!',
+    { text: "Hi [Contact], It was great connecting! As promised, here’s the proposal we talked about. Happy to jump on a quick call if anything needs clarification. Thanks!", confidence: 82 },
 };
+
+const DRAFT_TONE_LABELS: Record<DraftTone, string> = {
+  original: 'Original',
+  formal: 'Formal',
+  concise: 'Concise',
+  warm: 'Warm',
+};
+
+const MOCK_EMAILS = [
+  { id: 'e1', subject: 'Q1 follow-up and proposal review', from: 'jane@acme.com', date: 'Feb 5, 2025', preview: 'Thanks for the call today. Please send the proposal by end of week.' },
+  { id: 'e2', subject: 'Re: Implementation timeline', from: 'robert@globex.com', date: 'Feb 4, 2025', preview: 'Can we schedule a follow-up to discuss the implementation details?' },
+  { id: 'e3', subject: 'Intro - Wayne Industries', from: 'leslie@wayne.com', date: 'Feb 3, 2025', preview: 'Hi, connecting you with the team regarding the project scope.' },
+];
+
+const MOCK_TEXTS = [
+  { id: 't1', from: 'Jane Cooper', date: 'Feb 6, 2025', preview: 'Can you send the proposal draft by Wednesday? Would love to review before our call.' },
+  { id: 't2', from: 'Robert Fox', date: 'Feb 5, 2025', preview: 'Thanks for the update. Let me know when the contract is ready for signature.' },
+  { id: 't3', from: 'Leslie Alexander', date: 'Feb 4, 2025', preview: 'Quick question about the support SLA — can we go over it on the next call?' },
+];
+
+const ACTIVITY_TYPES = [
+  'Call',
+  'Email',
+  'Meeting',
+  'Note',
+  'Task',
+  'SMS',
+  'Other',
+] as const;
+
+const ACTIVITY_OUTCOMES = [
+  'Completed',
+  'Scheduled',
+  'No answer',
+  'Left message',
+  'Wrong number',
+  'Rescheduled',
+  'Other',
+] as const;
 
 const LOW_CONFIDENCE_THRESHOLD = 70;
 
@@ -179,6 +240,70 @@ function AutocompleteInput({
 }
 
 // ---------------------------------------------------------------------------
+// Step indicator (processing steps)
+// ---------------------------------------------------------------------------
+
+function StepIndicator({
+  step,
+  active,
+  label,
+}: {
+  step: number;
+  active: boolean;
+  label: string;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-1 shrink-0">
+      <div
+        className={cn(
+          'rounded-full w-7 h-7 flex items-center justify-center text-xs font-medium transition-colors',
+          active ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
+        )}
+      >
+        {active ? <Check className="h-4 w-4" /> : step}
+      </div>
+      <span
+        className={cn(
+          'text-xs transition-colors',
+          active ? 'text-foreground font-medium' : 'text-muted-foreground'
+        )}
+      >
+        {label}
+      </span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Urgency button (for button group)
+// ---------------------------------------------------------------------------
+
+function UrgencyButton({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'px-3 py-1.5 text-sm font-medium rounded-md border transition-colors',
+        active
+          ? 'bg-primary text-primary-foreground border-primary'
+          : 'bg-card text-foreground border-border hover:border-primary/50'
+      )}
+    >
+      {label}
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Confidence badge
 // ---------------------------------------------------------------------------
 
@@ -187,12 +312,88 @@ function ConfidenceBadge({ value }: { value: number }) {
   return (
     <span
       className={cn(
-        'text-xs font-medium px-1.5 py-0.5 rounded',
+        'text-xs font-medium px-1.5 py-0.5 rounded transition-colors',
         isLow ? 'bg-status-cooling/20 text-status-cooling' : 'bg-status-warm/20 text-status-warm'
       )}
     >
       {value}%
     </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Confirm checkbox (for submit confirmation dialog)
+// ---------------------------------------------------------------------------
+
+function ConfirmCheckbox({
+  label,
+  checked,
+  onCheckedChange,
+}: {
+  label: string;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex items-center gap-2 cursor-pointer">
+      <Checkbox
+        checked={checked}
+        onCheckedChange={(v) => onCheckedChange(v === true)}
+        className="w-4 h-4"
+      />
+      <span className="text-sm">{label}</span>
+    </label>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Date field with calendar popover
+// ---------------------------------------------------------------------------
+
+function DateFieldWithCalendar({
+  label,
+  date,
+  onDateChange,
+  confidence,
+  warning,
+}: {
+  label: string;
+  date: string;
+  onDateChange: (date: Date | undefined) => void;
+  confidence: number;
+  warning: boolean;
+}) {
+  const dateObj = date ? new Date(date + 'T00:00:00') : undefined;
+  const isValidDate = dateObj && !Number.isNaN(dateObj.getTime());
+
+  return (
+    <div className="space-y-1">
+      <Label>{label}</Label>
+      <div className="flex items-center gap-2">
+        <ConfidenceBadge value={confidence} />
+      </div>
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button
+            variant="outline"
+            className={cn(
+              'w-full justify-start text-left font-normal transition-colors',
+              warning && 'border-status-cooling'
+            )}
+          >
+            <CalendarIcon className="mr-2 h-4 w-4 shrink-0" />
+            {isValidDate ? format(dateObj, 'MMM d, yyyy') : 'Pick a date'}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-auto p-0" align="start">
+          <Calendar
+            mode="single"
+            selected={isValidDate ? dateObj : undefined}
+            onSelect={onDateChange}
+          />
+        </PopoverContent>
+      </Popover>
+    </div>
   );
 }
 
@@ -205,10 +406,20 @@ export default function ActivityPage(): React.ReactElement {
   const [processingStep, setProcessingStep] = React.useState<ProcessingStep>('idle');
   const [contactSearch, setContactSearch] = React.useState('');
   const [accountSearch, setAccountSearch] = React.useState('');
+  const [contactFocused, setContactFocused] = React.useState(false);
+  const [accountFocused, setAccountFocused] = React.useState(false);
+  const contactRef = React.useRef<HTMLDivElement>(null);
+  const accountRef = React.useRef<HTMLDivElement>(null);
   const [selectedContactId, setSelectedContactId] = React.useState<string | null>(null);
   const [selectedAccountId, setSelectedAccountId] = React.useState<string | null>(null);
+  const [activityType, setActivityType] = React.useState<string>('');
+  const [activityOutcome, setActivityOutcome] = React.useState<string>('');
   const [emailImportQuery, setEmailImportQuery] = React.useState('');
   const [textImportQuery, setTextImportQuery] = React.useState('');
+  const [emailImportFocused, setEmailImportFocused] = React.useState(false);
+  const [textImportFocused, setTextImportFocused] = React.useState(false);
+  const emailImportRef = React.useRef<HTMLDivElement>(null);
+  const textImportRef = React.useRef<HTMLDivElement>(null);
   const [startDate, setStartDate] = React.useState('');
   const [startDateConfidence, setStartDateConfidence] = React.useState(85);
   const [dueDate, setDueDate] = React.useState('');
@@ -219,23 +430,87 @@ export default function ActivityPage(): React.ReactElement {
   const [questionsRaised, setQuestionsRaised] = React.useState(
     MOCK_EXTRACTED.questionsRaised
   );
-  const [selectedDraftTone, setSelectedDraftTone] = React.useState<DraftTone>('formal');
+  const [selectedDraftTone, setSelectedDraftTone] = React.useState<DraftTone>('original');
+  const [drafts, setDrafts] = React.useState<Record<DraftTone, { text: string; confidence: number }>>(MOCK_DRAFTS);
+  const [regeneratingTone, setRegeneratingTone] = React.useState<DraftTone | null>(null);
   const [summaryDraft, setSummaryDraft] = React.useState(MOCK_AI_SUMMARY);
   const [submitConfirmOpen, setSubmitConfirmOpen] = React.useState(false);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [confirmUpdateActivity, setConfirmUpdateActivity] = React.useState(true);
+  const [confirmClonePriorNotes, setConfirmClonePriorNotes] = React.useState(false);
+  const [confirmMarkComplete, setConfirmMarkComplete] = React.useState(true);
+  const [confirmCreateOpportunity, setConfirmCreateOpportunity] = React.useState(false);
+  const [confirmLinkContact, setConfirmLinkContact] = React.useState(true);
+  const [confirmLinkAccount, setConfirmLinkAccount] = React.useState(true);
   const [previewEditOpen, setPreviewEditOpen] = React.useState(false);
-  const [previewContent, setPreviewContent] = React.useState(MOCK_DRAFTS.formal);
-  const [isRegenerating, setIsRegenerating] = React.useState(false);
+  const [previewContent, setPreviewContent] = React.useState(MOCK_DRAFTS.original.text);
+  const [editingDraftTone, setEditingDraftTone] = React.useState<DraftTone | null>(null);
+  const [isRegeneratingInPreview, setIsRegeneratingInPreview] = React.useState(false);
 
   const lowConfidenceFields = React.useMemo(() => {
     const list: string[] = [];
     if (MOCK_EXTRACTED.questionsRaisedConfidence < LOW_CONFIDENCE_THRESHOLD)
       list.push('Questions Raised');
+    if (startDateConfidence < LOW_CONFIDENCE_THRESHOLD) list.push('Start Date');
     if (dueDateConfidence < LOW_CONFIDENCE_THRESHOLD) list.push('Due Date');
     return list;
-  }, [dueDateConfidence]);
+  }, [startDateConfidence, dueDateConfidence]);
 
   const showErrorBanner = lowConfidenceFields.length > 0 && processingStep === 'ready';
+
+  React.useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (emailImportRef.current && !emailImportRef.current.contains(e.target as Node)) {
+        setEmailImportFocused(false);
+      }
+      if (textImportRef.current && !textImportRef.current.contains(e.target as Node)) {
+        setTextImportFocused(false);
+      }
+      if (contactRef.current && !contactRef.current.contains(e.target as Node)) {
+        setContactFocused(false);
+      }
+      if (accountRef.current && !accountRef.current.contains(e.target as Node)) {
+        setAccountFocused(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const filteredEmails = React.useMemo(() => {
+    const q = emailImportQuery.trim().toLowerCase();
+    if (!q) return MOCK_EMAILS;
+    return MOCK_EMAILS.filter(
+      (e) =>
+        e.subject.toLowerCase().includes(q) ||
+        e.from.toLowerCase().includes(q) ||
+        e.preview.toLowerCase().includes(q)
+    );
+  }, [emailImportQuery]);
+
+  const filteredTexts = React.useMemo(() => {
+    const q = textImportQuery.trim().toLowerCase();
+    if (!q) return MOCK_TEXTS;
+    return MOCK_TEXTS.filter(
+      (t) =>
+        t.from.toLowerCase().includes(q) || t.preview.toLowerCase().includes(q)
+    );
+  }, [textImportQuery]);
+
+  const filteredContacts = React.useMemo(() => {
+    const q = contactSearch.trim().toLowerCase();
+    if (!q) return MOCK_CONTACTS;
+    return MOCK_CONTACTS.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q)
+    );
+  }, [contactSearch]);
+
+  const filteredAccounts = React.useMemo(() => {
+    const q = accountSearch.trim().toLowerCase();
+    if (!q) return MOCK_ACCOUNTS;
+    return MOCK_ACCOUNTS.filter((a) => a.name.toLowerCase().includes(q));
+  }, [accountSearch]);
 
   const handleSendForProcessing = () => {
     setProcessingStep('sent');
@@ -256,32 +531,61 @@ export default function ActivityPage(): React.ReactElement {
     setDueDateConfidence(100);
   };
 
-  const handleRegenerate = () => {
-    setIsRegenerating(true);
+  const handleRegenerate = (tone: DraftTone) => {
+    setRegeneratingTone(tone);
     setTimeout(() => {
-      setPreviewContent(MOCK_DRAFTS[selectedDraftTone]);
-      setIsRegenerating(false);
+      setDrafts((prev) => ({
+        ...prev,
+        [tone]: { ...prev[tone], text: prev[tone].text + ' (regenerated)' },
+      }));
+      setRegeneratingTone(null);
     }, 1200);
   };
 
-  const openPreview = () => {
-    setPreviewContent(MOCK_DRAFTS[selectedDraftTone]);
+  const openPreview = (tone: DraftTone) => {
+    setEditingDraftTone(tone);
+    setPreviewContent(drafts[tone].text);
     setPreviewEditOpen(true);
+  };
+
+  const closePreviewAndSave = () => {
+    if (editingDraftTone !== null) {
+      setDrafts((prev) => ({
+        ...prev,
+        [editingDraftTone]: { ...prev[editingDraftTone], text: previewContent },
+      }));
+      setEditingDraftTone(null);
+    }
+    setPreviewEditOpen(false);
+  };
+
+  const handleRegenerateInPreview = () => {
+    setIsRegeneratingInPreview(true);
+    setTimeout(() => {
+      setPreviewContent((prev) => prev + ' (regenerated)');
+      setIsRegeneratingInPreview(false);
+    }, 1200);
   };
 
   const charCount = noteContent.length;
   const CHAR_LIMIT = 10000;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8">
-      {/* LEFT COLUMN - stacks on mobile, 5/12 (~40%) on desktop */}
-      <div className="flex flex-col gap-6 lg:col-span-5">
+    <div className="h-full flex overflow-hidden">
+      {/* Left sidebar - 400px, scrollable */}
+      <div className="w-[400px] shrink-0 overflow-y-auto bg-surface border-r border-border">
+        <div className="flex flex-col gap-6 p-4">
         {/* 1. Note Editor */}
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
               Meeting Notes / Email Thread / Handwritten Notes
             </CardTitle>
+            <p className="text-xs text-muted-foreground mt-1 transition-colors">
+              {processingStep === 'sent' || processingStep === 'extracting'
+                ? 'Saving…'
+                : 'Last saved 12:42 PM'}
+            </p>
           </CardHeader>
           <CardContent className="space-y-3">
             <Textarea
@@ -297,6 +601,27 @@ export default function ActivityPage(): React.ReactElement {
                 {charCount.toLocaleString()} / {CHAR_LIMIT.toLocaleString()} characters
               </span>
             </div>
+            {processingStep !== 'idle' && (
+              <div className="flex items-center gap-4 py-1">
+                <StepIndicator
+                  step={1}
+                  active={['sent', 'extracting', 'ready'].includes(processingStep)}
+                  label="Sent"
+                />
+                <div className="flex-1 h-px min-w-2 bg-border" aria-hidden />
+                <StepIndicator
+                  step={2}
+                  active={['extracting', 'ready'].includes(processingStep)}
+                  label="Extracting"
+                />
+                <div className="flex-1 h-px min-w-2 bg-border" aria-hidden />
+                <StepIndicator
+                  step={3}
+                  active={processingStep === 'ready'}
+                  label="Ready"
+                />
+              </div>
+            )}
             <div className="flex gap-2">
               <Button
                 onClick={handleSendForProcessing}
@@ -312,26 +637,6 @@ export default function ActivityPage(): React.ReactElement {
               </Button>
               <Button variant="secondary">Save Draft</Button>
             </div>
-            {processingStep !== 'idle' && (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <span
-                  className={cn(
-                    processingStep === 'sent' && 'text-status-active',
-                    processingStep === 'extracting' && 'text-status-active animate-pulse',
-                    processingStep === 'ready' && 'text-status-warm'
-                  )}
-                >
-                  {processingStep === 'sent' && 'Sent'}
-                  {processingStep === 'extracting' && 'Extracting…'}
-                  {processingStep === 'ready' && 'Ready'}
-                </span>
-                <span className="text-muted-foreground/70">
-                  {processingStep === 'sent' && '→'}
-                  {processingStep === 'extracting' && '→'}
-                  {processingStep === 'ready' && '✓'}
-                </span>
-              </div>
-            )}
           </CardContent>
         </Card>
 
@@ -341,40 +646,112 @@ export default function ActivityPage(): React.ReactElement {
             <CardTitle className="text-base">Import from Communication</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div>
-              <Label className="text-sm text-muted-foreground">Import from Email</Label>
+            <div ref={emailImportRef} className="relative">
+              <Label className="text-sm text-muted-foreground flex items-center gap-1.5">
+                <Mail className="h-4 w-4" />
+                Email Inbox
+              </Label>
               <div className="flex gap-2 mt-1">
-                <AutocompleteInput
-                  value={emailImportQuery}
-                  onChange={setEmailImportQuery}
-                  placeholder="Search emails..."
-                  options={[]}
-                  getOptionLabel={() => ''}
-                  onSelect={() => {}}
-                  className="flex-1"
-                />
-                <Button variant="secondary" size="sm" className="gap-1 shrink-0">
-                  <Mail className="h-4 w-4" />
-                  Generate Note from Email
-                </Button>
+                <div className="relative flex-1">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                  <Input
+                    value={emailImportQuery}
+                    onChange={(e) => setEmailImportQuery(e.target.value)}
+                    onFocus={() => setEmailImportFocused(true)}
+                    placeholder="Search emails..."
+                    className="pl-8"
+                  />
+                  {(emailImportFocused || emailImportQuery) && (
+                    <div className="absolute top-full left-0 right-0 z-10 mt-1 border border-border rounded-lg bg-card shadow-lg max-h-40 overflow-auto">
+                      {filteredEmails.length === 0 ? (
+                        <div className="px-3 py-2 text-sm text-muted-foreground">
+                          No emails found
+                        </div>
+                      ) : (
+                        filteredEmails.map((email, i) => (
+                          <button
+                            key={email.id}
+                            type="button"
+                            onClick={() => {
+                              setEmailImportQuery(email.subject);
+                              setEmailImportFocused(false);
+                            }}
+                            className={cn(
+                              'w-full text-left px-3 py-2 hover:bg-muted transition-colors',
+                              i < filteredEmails.length - 1 && 'border-b border-border'
+                            )}
+                          >
+                            <p className="font-medium text-sm">{email.subject}</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              {email.from} • {email.date}
+                            </p>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+                {emailImportQuery.trim() && (
+                  <Button variant="secondary" size="sm" className="gap-1 shrink-0">
+                    <Mail className="h-4 w-4" />
+                    Generate Note from Email
+                  </Button>
+                )}
               </div>
             </div>
-            <div>
-              <Label className="text-sm text-muted-foreground">Import from Text</Label>
+            <div ref={textImportRef} className="relative">
+              <Label className="text-sm text-muted-foreground flex items-center gap-1.5">
+                <MessageSquare className="h-4 w-4" />
+                Text Messages
+              </Label>
               <div className="flex gap-2 mt-1">
-                <AutocompleteInput
-                  value={textImportQuery}
-                  onChange={setTextImportQuery}
-                  placeholder="Search or paste text..."
-                  options={[]}
-                  getOptionLabel={() => ''}
-                  onSelect={() => {}}
-                  className="flex-1"
-                />
-                <Button variant="secondary" size="sm" className="gap-1 shrink-0">
-                  <FileText className="h-4 w-4" />
-                  Generate Note from Text
-                </Button>
+                <div className="relative flex-1">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                  <Input
+                    value={textImportQuery}
+                    onChange={(e) => setTextImportQuery(e.target.value)}
+                    onFocus={() => setTextImportFocused(true)}
+                    placeholder="Search text messages..."
+                    className="pl-8"
+                  />
+                  {(textImportFocused || textImportQuery) && (
+                    <div className="absolute top-full left-0 right-0 z-10 mt-1 border border-border rounded-lg bg-card shadow-lg max-h-40 overflow-auto">
+                      {filteredTexts.length === 0 ? (
+                        <div className="px-3 py-2 text-sm text-muted-foreground">
+                          No messages found
+                        </div>
+                      ) : (
+                        filteredTexts.map((text, i) => (
+                          <button
+                            key={text.id}
+                            type="button"
+                            onClick={() => {
+                              setTextImportQuery(text.from);
+                              setTextImportFocused(false);
+                            }}
+                            className={cn(
+                              'w-full text-left px-3 py-2 hover:bg-muted transition-colors',
+                              i < filteredTexts.length - 1 && 'border-b border-border'
+                            )}
+                          >
+                            <p className="text-sm text-muted-foreground">
+                              {text.from} • {text.date}
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
+                              {text.preview}
+                            </p>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+                {textImportQuery.trim() && (
+                  <Button variant="secondary" size="sm" className="gap-1 shrink-0">
+                    <FileText className="h-4 w-4" />
+                    Generate Note from Text
+                  </Button>
+                )}
               </div>
             </div>
           </CardContent>
@@ -386,29 +763,92 @@ export default function ActivityPage(): React.ReactElement {
             <CardTitle className="text-base">Contact & Account</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div>
-              <Label>Contact</Label>
-              <AutocompleteInput
-                value={contactSearch}
-                onChange={setContactSearch}
-                placeholder="Search contacts..."
-                options={MOCK_CONTACTS}
-                getOptionLabel={(o) => (o as unknown as { name: string }).name}
-                onSelect={(o) => setSelectedContactId(o.id)}
-                className="mt-1"
-              />
+            <div ref={contactRef} className="relative">
+              <Label className="flex items-center gap-1.5">
+                <User className="h-4 w-4" />
+                Contact
+              </Label>
+              <div className="relative mt-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                <Input
+                  value={contactSearch}
+                  onChange={(e) => setContactSearch(e.target.value)}
+                  onFocus={() => setContactFocused(true)}
+                  placeholder="Search contacts..."
+                  className="pl-8"
+                />
+                {(contactFocused || contactSearch) && (
+                  <div className="absolute top-full left-0 right-0 z-10 mt-1 border border-border rounded-lg bg-card shadow-lg max-h-40 overflow-auto">
+                    {filteredContacts.length === 0 ? (
+                      <div className="px-3 py-2 text-sm text-muted-foreground">
+                        No contacts found
+                      </div>
+                    ) : (
+                      filteredContacts.map((contact, i) => (
+                        <button
+                          key={contact.id}
+                          type="button"
+                          onClick={() => {
+                            setContactSearch(contact.name);
+                            setSelectedContactId(contact.id);
+                            setContactFocused(false);
+                          }}
+                          className={cn(
+                            'w-full text-left px-3 py-2 hover:bg-muted transition-colors',
+                            i < filteredContacts.length - 1 && 'border-b border-border'
+                          )}
+                        >
+                          <p className="font-medium text-sm">{contact.name}</p>
+                          <p className="text-xs text-muted-foreground">{contact.email}</p>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
-            <div>
-              <Label>Account</Label>
-              <AutocompleteInput
-                value={accountSearch}
-                onChange={setAccountSearch}
-                placeholder="Search accounts..."
-                options={MOCK_ACCOUNTS}
-                getOptionLabel={(o) => (o as unknown as { name: string }).name}
-                onSelect={(o) => setSelectedAccountId(o.id)}
-                className="mt-1"
-              />
+            <div ref={accountRef} className="relative">
+              <Label className="flex items-center gap-1.5">
+                <Building2 className="h-4 w-4" />
+                Account
+              </Label>
+              <div className="relative mt-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                <Input
+                  value={accountSearch}
+                  onChange={(e) => setAccountSearch(e.target.value)}
+                  onFocus={() => setAccountFocused(true)}
+                  placeholder="Search accounts..."
+                  className="pl-8"
+                />
+                {(accountFocused || accountSearch) && (
+                  <div className="absolute top-full left-0 right-0 z-10 mt-1 border border-border rounded-lg bg-card shadow-lg max-h-40 overflow-auto">
+                    {filteredAccounts.length === 0 ? (
+                      <div className="px-3 py-2 text-sm text-muted-foreground">
+                        No accounts found
+                      </div>
+                    ) : (
+                      filteredAccounts.map((account, i) => (
+                        <button
+                          key={account.id}
+                          type="button"
+                          onClick={() => {
+                            setAccountSearch(account.name);
+                            setSelectedAccountId(account.id);
+                            setAccountFocused(false);
+                          }}
+                          className={cn(
+                            'w-full text-left px-3 py-2 hover:bg-muted transition-colors',
+                            i < filteredAccounts.length - 1 && 'border-b border-border'
+                          )}
+                        >
+                          <p className="font-medium text-sm">{account.name}</p>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
             <div className="flex gap-4 text-sm">
               <Link
@@ -425,6 +865,55 @@ export default function ActivityPage(): React.ReactElement {
                 <Building2 className="h-4 w-4" />
                 Create Account
               </Link>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Activity Type & Outcome */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Activity Details</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div>
+              <Label className="text-sm text-muted-foreground">
+                Activity Type
+              </Label>
+              <Select
+                value={activityType}
+                onValueChange={setActivityType}
+              >
+                <SelectTrigger className="mt-1 h-9 rounded-md border border-border bg-background text-sm font-normal text-foreground">
+                  <SelectValue placeholder="Select type" />
+                </SelectTrigger>
+                <SelectContent>
+                  {ACTIVITY_TYPES.map((type) => (
+                    <SelectItem key={type} value={type}>
+                      {type}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-sm text-muted-foreground">
+                Activity Outcome
+              </Label>
+              <Select
+                value={activityOutcome}
+                onValueChange={setActivityOutcome}
+              >
+                <SelectTrigger className="mt-1 h-9 rounded-md border border-border bg-background text-sm font-normal text-foreground">
+                  <SelectValue placeholder="Select outcome" />
+                </SelectTrigger>
+                <SelectContent>
+                  {ACTIVITY_OUTCOMES.map((outcome) => (
+                    <SelectItem key={outcome} value={outcome}>
+                      {outcome}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </CardContent>
         </Card>
@@ -460,29 +949,19 @@ export default function ActivityPage(): React.ReactElement {
             </Button>
           </CardContent>
         </Card>
+        </div>
       </div>
 
-      {/* RIGHT COLUMN - 7/12 (~60%) on desktop, scrollable */}
-      <div className="flex flex-col gap-6 overflow-y-auto lg:col-span-7 lg:max-h-[calc(100vh-8rem)]">
-        {/* 1. Error Banner */}
-        {showErrorBanner && (
-          <Card className="border-status-at-risk/50 bg-status-at-risk/10">
-            <CardContent className="flex gap-3 py-4">
-              <AlertTriangle className="h-5 w-5 text-status-at-risk shrink-0 mt-0.5" />
-              <div>
-                <p className="font-medium text-status-at-risk">Low confidence detected</p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Review and correct: {lowConfidenceFields.join(', ')}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* 2. Communication History Summary */}
-        <Card>
+      {/* Right content - flex-1, scrollable */}
+      <div className="flex-1 flex flex-col overflow-y-auto p-4">
+        <div className="max-w-3xl mx-auto w-full flex flex-col gap-6">
+        {/* 1. Summary of Communication History - first section */}
+        <Card className="border-primary/30 bg-primary/5">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-base">Communication History Summary</CardTitle>
+            <CardTitle className="text-base flex items-center gap-2">
+              <RefreshCw className="h-4 w-4 text-primary" />
+              Summary of Communication History
+            </CardTitle>
             {processingStep !== 'extracting' && (
               <div className="flex gap-1">
                 <Button variant="ghost" size="sm">Use Draft</Button>
@@ -500,12 +979,27 @@ export default function ActivityPage(): React.ReactElement {
                 <Skeleton variant="text" className="h-3 w-3/4" />
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+              <p className="text-sm text-muted-foreground line-clamp-3">
                 {summaryDraft}
               </p>
             )}
           </CardContent>
         </Card>
+
+        {/* 2. Error Banner - only when low confidence fields */}
+        {showErrorBanner && (
+          <Card className="border-status-at-risk/50 bg-status-at-risk/10">
+            <CardContent className="flex gap-3 py-4">
+              <AlertTriangle className="h-5 w-5 text-status-at-risk shrink-0 mt-0.5" />
+              <div>
+                <p className="font-medium text-status-at-risk">Low confidence detected</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Review and correct: {lowConfidenceFields.join(', ')}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* 3. Recognized Dates */}
         <Card>
@@ -527,20 +1021,16 @@ export default function ActivityPage(): React.ReactElement {
             ) : (
             <>
             <div className="flex flex-wrap items-end gap-2">
-              <div className="flex-1 min-w-[140px]">
-                <Label>Start Date</Label>
-                <div className="flex gap-2 mt-1">
-                  <Input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    className={cn(
-                      startDateConfidence < LOW_CONFIDENCE_THRESHOLD &&
-                        'border-status-cooling'
-                    )}
-                  />
-                  <ConfidenceBadge value={startDateConfidence} />
-                </div>
+              <div className="flex-1 min-w-[180px]">
+                <DateFieldWithCalendar
+                  label="Start Date"
+                  date={startDate}
+                  onDateChange={(d) =>
+                    setStartDate(d ? format(d, 'yyyy-MM-dd') : '')
+                  }
+                  confidence={startDateConfidence}
+                  warning={startDateConfidence < LOW_CONFIDENCE_THRESHOLD}
+                />
               </div>
               <Button variant="outline" size="sm" onClick={handleApplyStartDate}>
                 Apply
@@ -548,20 +1038,16 @@ export default function ActivityPage(): React.ReactElement {
               <Button variant="ghost" size="sm">Override</Button>
             </div>
             <div className="flex flex-wrap items-end gap-2">
-              <div className="flex-1 min-w-[140px]">
-                <Label>Due Date</Label>
-                <div className="flex gap-2 mt-1">
-                  <Input
-                    type="date"
-                    value={dueDate}
-                    onChange={(e) => setDueDate(e.target.value)}
-                    className={cn(
-                      dueDateConfidence < LOW_CONFIDENCE_THRESHOLD &&
-                        'border-status-cooling'
-                    )}
-                  />
-                  <ConfidenceBadge value={dueDateConfidence} />
-                </div>
+              <div className="flex-1 min-w-[180px]">
+                <DateFieldWithCalendar
+                  label="Due Date"
+                  date={dueDate}
+                  onDateChange={(d) =>
+                    setDueDate(d ? format(d, 'yyyy-MM-dd') : '')
+                  }
+                  confidence={dueDateConfidence}
+                  warning={dueDateConfidence < LOW_CONFIDENCE_THRESHOLD}
+                />
               </div>
               <Button variant="outline" size="sm" onClick={handleApplyDueDate}>
                 Apply
@@ -574,9 +1060,15 @@ export default function ActivityPage(): React.ReactElement {
         </Card>
 
         {/* 4. Recommended Touch Dates */}
-        <Card>
+        <Card className="border-primary/30 bg-primary/5">
           <CardHeader>
-            <CardTitle className="text-base">Recommended Touch Dates</CardTitle>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-primary" />
+              Recommended Touch Dates
+            </CardTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              Based on relationship health and prior patterns, we suggest:
+            </p>
           </CardHeader>
           <CardContent className="space-y-3">
             {processingStep === 'extracting' ? (
@@ -589,23 +1081,137 @@ export default function ActivityPage(): React.ReactElement {
                 ))}
               </div>
             ) : (
-            <>
-            {MOCK_RECOMMENDED_DATES.map((rec) => (
-              <div
-                key={rec.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border p-3"
-              >
-                <div>
-                  <p className="font-medium text-sm">{rec.label}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">{rec.rationale}</p>
-                </div>
-                <Button variant="outline" size="sm">
-                  Apply
+              <>
+                {MOCK_RECOMMENDED_DATES.map((rec) => (
+                  <div
+                    key={rec.id}
+                    className="flex flex-wrap justify-between items-start gap-2 rounded-md border border-border p-3"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold text-sm">{rec.label}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{rec.rationale}</p>
+                    </div>
+                    <div className="flex gap-2 shrink-0">
+                      <Button variant="default" size="sm" className="gap-1">
+                        <CheckCircle2 className="h-4 w-4" />
+                        Apply
+                      </Button>
+                      <Button variant="outline" size="sm">
+                        Override
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 6. AI-Generated Drafts */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">AI-Generated Drafts</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {processingStep === 'extracting' ? (
+              <div className="space-y-3">
+                {[1, 2, 3, 4].map((i) => (
+                  <Skeleton key={i} variant="rectangle" className="h-24 w-full rounded-md" />
+                ))}
+              </div>
+            ) : (
+              <>
+                {(['original', 'formal', 'concise', 'warm'] as const).map((tone) => {
+                  const draft = drafts[tone];
+                  const isSelected = selectedDraftTone === tone;
+                  const isRegeneratingThis = regeneratingTone === tone;
+                  return (
+                    <div
+                      key={tone}
+                      className={cn(
+                        'rounded-md border p-3 transition-colors',
+                        isSelected ? 'border-primary bg-primary/5' : 'border-border'
+                      )}
+                    >
+                      <div className="flex justify-between items-start gap-2 mb-2">
+                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-secondary">
+                          {DRAFT_TONE_LABELS[tone]}
+                        </span>
+                        <span className="text-xs text-muted-foreground shrink-0">
+                          {draft.confidence}%
+                        </span>
+                      </div>
+                      <p className="text-sm text-muted-foreground line-clamp-2 mb-3">
+                        {draft.text}
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setSelectedDraftTone(tone)}
+                        >
+                          Select
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="gap-1"
+                          onClick={() => openPreview(tone)}
+                        >
+                          <Pencil className="h-4 w-4" />
+                          Edit
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="gap-1"
+                          onClick={() => handleRegenerate(tone)}
+                          disabled={isRegeneratingThis}
+                        >
+                          <RotateCw
+                            className={cn('h-4 w-4', isRegeneratingThis && 'animate-spin')}
+                          />
+                          Regenerate
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Relationship & Opportunity */}
+        <Card>
+          <CardContent className="pt-6 space-y-4">
+            <div>
+              <div className="flex justify-between items-center">
+                <Label className="text-sm text-muted-foreground">
+                  Relationship Status
+                </Label>
+                <Button variant="ghost" size="sm" className="gap-1">
+                  <ChevronDown className="h-4 w-4" />
+                  Adjust
                 </Button>
               </div>
-            ))}
-            </>
-            )}
+              <div className="mt-2">
+                <StatusChip status="Active" />
+              </div>
+            </div>
+            <div>
+              <div className="flex justify-between items-center">
+                <Label className="text-sm text-muted-foreground">
+                  Opportunity Probability
+                </Label>
+                <Button variant="outline" size="sm">
+                  Create Opportunity
+                </Button>
+              </div>
+              <div className="mt-2">
+                <OpportunityIndicator percentage={75} />
+              </div>
+            </div>
           </CardContent>
         </Card>
 
@@ -623,15 +1229,19 @@ export default function ActivityPage(): React.ReactElement {
                 </div>
                 <div>
                   <Skeleton variant="text" className="h-4 w-24 mb-2" />
-                  <Skeleton variant="rectangle" className="h-9 w-full" />
+                  <Skeleton variant="rectangle" className="h-[4.5rem] w-full" />
                 </div>
                 <div>
                   <Skeleton variant="text" className="h-4 w-28 mb-2" />
-                  <Skeleton variant="rectangle" className="h-9 w-full" />
+                  <Skeleton variant="rectangle" className="h-[4.5rem] w-full" />
                 </div>
                 <div>
                   <Skeleton variant="text" className="h-4 w-24 mb-2" />
-                  <Skeleton variant="rectangle" className="h-10 w-full" />
+                  <div className="flex gap-2 mt-1">
+                    <Skeleton variant="rectangle" className="h-9 w-16" />
+                    <Skeleton variant="rectangle" className="h-9 w-20" />
+                    <Skeleton variant="rectangle" className="h-9 w-16" />
+                  </div>
                 </div>
               </div>
             ) : (
@@ -652,10 +1262,11 @@ export default function ActivityPage(): React.ReactElement {
                 Next Steps
                 <ConfidenceBadge value={MOCK_EXTRACTED.nextStepsConfidence} />
               </Label>
-              <Input
+              <Textarea
                 value={nextSteps}
                 onChange={(e) => setNextSteps(e.target.value)}
                 className="mt-1"
+                rows={2}
               />
             </div>
             <div>
@@ -665,7 +1276,7 @@ export default function ActivityPage(): React.ReactElement {
                   value={MOCK_EXTRACTED.questionsRaisedConfidence}
                 />
               </Label>
-              <Input
+              <Textarea
                 value={questionsRaised}
                 onChange={(e) => setQuestionsRaised(e.target.value)}
                 className={cn(
@@ -673,105 +1284,77 @@ export default function ActivityPage(): React.ReactElement {
                   MOCK_EXTRACTED.questionsRaisedConfidence <
                     LOW_CONFIDENCE_THRESHOLD && 'border-status-cooling'
                 )}
+                rows={2}
               />
             </div>
             <div>
               <Label>Urgency Level</Label>
-              <Select
-                value={urgency}
-                onValueChange={(v) => setUrgency(v as UrgencyLevel)}
-              >
-                <SelectTrigger className="mt-1">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="low">Low</SelectItem>
-                  <SelectItem value="medium">Medium</SelectItem>
-                  <SelectItem value="high">High</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            </>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* 6. AI-Generated Drafts */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">AI-Generated Drafts</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {processingStep === 'extracting' ? (
-              <div className="space-y-3">
-                <div className="space-y-2">
-                  {[1, 2, 3].map((i) => (
-                    <Skeleton key={i} variant="rectangle" className="h-12 w-full" />
-                  ))}
-                </div>
-                <div className="flex gap-2">
-                  <Skeleton variant="rectangle" className="h-9 w-28" />
-                  <Skeleton variant="rectangle" className="h-9 w-24" />
-                </div>
-              </div>
-            ) : (
-            <>
-            <div className="space-y-2" role="radiogroup" aria-label="Draft tone">
-              {(['formal', 'concise', 'warm'] as const).map((tone) => (
-                <label
-                  key={tone}
-                  className={cn(
-                    'flex items-start gap-3 rounded-md border p-3 cursor-pointer transition-colors',
-                    selectedDraftTone === tone
-                      ? 'border-primary bg-primary/5'
-                      : 'border-border hover:bg-muted/50'
-                  )}
-                >
-                  <input
-                    type="radio"
-                    name="draftTone"
-                    value={tone}
-                    checked={selectedDraftTone === tone}
-                    onChange={() => setSelectedDraftTone(tone)}
-                    className="mt-1"
-                  />
-                  <span className="capitalize font-medium">{tone}</span>
-                </label>
-              ))}
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={openPreview} className="gap-1">
-                Preview & Edit
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleRegenerate}
-                disabled={isRegenerating}
-                className="gap-1"
-              >
-                <RotateCw
-                  className={cn('h-4 w-4', isRegenerating && 'animate-spin')}
+              <div className="flex gap-2 mt-1">
+                <UrgencyButton
+                  label="Low"
+                  active={urgency === 'low'}
+                  onClick={() => setUrgency('low')}
                 />
-                Regenerate
-              </Button>
+                <UrgencyButton
+                  label="Medium"
+                  active={urgency === 'medium'}
+                  onClick={() => setUrgency('medium')}
+                />
+                <UrgencyButton
+                  label="High"
+                  active={urgency === 'high'}
+                  onClick={() => setUrgency('high')}
+                />
+              </div>
             </div>
             </>
             )}
           </CardContent>
         </Card>
+        </div>
       </div>
 
       {/* Submit confirmation modal */}
       <Dialog open={submitConfirmOpen} onOpenChange={setSubmitConfirmOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Submit activity?</DialogTitle>
+            <DialogTitle>Confirm Submission</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            This will save the activity and sync to your CRM. You can edit it later from the
-            dashboard.
+            Review the actions that will be performed
           </p>
+          <div className="space-y-3">
+            <ConfirmCheckbox
+              label="Update Activity in CRM"
+              checked={confirmUpdateActivity}
+              onCheckedChange={setConfirmUpdateActivity}
+            />
+            <ConfirmCheckbox
+              label="Clone prior notes"
+              checked={confirmClonePriorNotes}
+              onCheckedChange={setConfirmClonePriorNotes}
+            />
+            <ConfirmCheckbox
+              label="Mark previous Activity as Complete"
+              checked={confirmMarkComplete}
+              onCheckedChange={setConfirmMarkComplete}
+            />
+            <ConfirmCheckbox
+              label="Create Opportunity (75%)"
+              checked={confirmCreateOpportunity}
+              onCheckedChange={setConfirmCreateOpportunity}
+            />
+            <ConfirmCheckbox
+              label="Link Contact: Sarah Johnson"
+              checked={confirmLinkContact}
+              onCheckedChange={setConfirmLinkContact}
+            />
+            <ConfirmCheckbox
+              label="Link Account: TechCorp Industries"
+              checked={confirmLinkAccount}
+              onCheckedChange={setConfirmLinkAccount}
+            />
+          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSubmitConfirmOpen(false)} disabled={isSubmitting}>
               Cancel
@@ -790,7 +1373,7 @@ export default function ActivityPage(): React.ReactElement {
               className="gap-2"
             >
               {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              Submit
+              Confirm & Submit
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -801,6 +1384,9 @@ export default function ActivityPage(): React.ReactElement {
         <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>Preview & Edit Draft</DialogTitle>
+            <DialogDescription>
+              Review and customize this AI-generated draft
+            </DialogDescription>
           </DialogHeader>
           <Textarea
             value={previewContent}
@@ -808,10 +1394,26 @@ export default function ActivityPage(): React.ReactElement {
             className="min-h-[200px] flex-1 resize-y"
           />
           <DialogFooter>
-            <Button variant="outline" onClick={() => setPreviewEditOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => { setEditingDraftTone(null); setPreviewEditOpen(false); }}
+            >
               Cancel
             </Button>
-            <Button onClick={() => setPreviewEditOpen(false)}>Done</Button>
+            <Button
+              variant="outline"
+              onClick={handleRegenerateInPreview}
+              disabled={isRegeneratingInPreview}
+              className="gap-2"
+            >
+              <RotateCw
+                className={cn('h-4 w-4', isRegeneratingInPreview && 'animate-spin')}
+              />
+              Regenerate
+            </Button>
+            <Button onClick={closePreviewAndSave}>
+              Use This Draft
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
