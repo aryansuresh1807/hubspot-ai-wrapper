@@ -13,7 +13,10 @@ import {
   Check,
   AlertCircle,
   Loader2,
+  Activity,
 } from 'lucide-react';
+import { Skeleton } from '@/components/shared/skeleton';
+import { EmptyState } from '@/components/shared/empty-state';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -117,7 +120,30 @@ function formatDuration(ms: number): string {
 // Page
 // ---------------------------------------------------------------------------
 
+function IntegrationTileSkeleton() {
+  return (
+    <Card className="overflow-hidden shadow-card">
+      <div className="p-6 flex items-center justify-center bg-muted/30">
+        <Skeleton variant="circle" className="h-12 w-12" />
+      </div>
+      <CardContent className="p-4 space-y-3">
+        <Skeleton variant="text" className="h-5 w-32" />
+        <div className="flex items-center justify-between gap-2">
+          <Skeleton variant="text" className="h-5 w-24 rounded-full" />
+          <Skeleton variant="rectangle" className="h-9 w-20" />
+        </div>
+        <Skeleton variant="text" className="h-3 w-28" />
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function IntegrationsPage(): React.ReactElement {
+  const [tilesLoading, setTilesLoading] = React.useState(true);
+  React.useEffect(() => {
+    const t = setTimeout(() => setTilesLoading(false), 600);
+    return () => clearTimeout(t);
+  }, []);
   const [expandedSettings, setExpandedSettings] = React.useState<IntegrationId | null>(null);
   const [apiKeyVisible, setApiKeyVisible] = React.useState<Record<IntegrationId, boolean>>({
     hubspot: false,
@@ -200,43 +226,51 @@ export default function IntegrationsPage(): React.ReactElement {
       <section>
         <h2 className="text-lg font-semibold mb-4">Services</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {INTEGRATIONS.map((int) => {
-            const Icon = int.icon;
-            return (
-              <Card key={int.id} className="overflow-hidden shadow-card">
-                <div className={cn('p-6 flex items-center justify-center', int.brandBg)}>
-                  <Icon className="h-12 w-12 text-foreground/80" />
-                </div>
-                <CardContent className="p-4 space-y-3">
-                  <p className="font-semibold">{int.name}</p>
-                  <div className="flex items-center justify-between gap-2">
-                    <span
-                      className={cn(
-                        'text-xs font-medium px-2 py-0.5 rounded-full',
-                        int.status === 'connected'
-                          ? 'bg-status-warm/15 text-status-warm'
-                          : 'bg-muted text-muted-foreground'
-                      )}
-                    >
-                      {int.status === 'connected' ? 'Connected' : 'Disconnected'}
-                    </span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        setExpandedSettings(expandedSettings === int.id ? null : int.id)
-                      }
-                    >
-                      Configure
-                    </Button>
+          {tilesLoading ? (
+            <>
+              {[1, 2, 3].map((i) => (
+                <IntegrationTileSkeleton key={i} />
+              ))}
+            </>
+          ) : (
+            INTEGRATIONS.map((int) => {
+              const Icon = int.icon;
+              return (
+                <Card key={int.id} className="overflow-hidden shadow-card">
+                  <div className={cn('p-6 flex items-center justify-center', int.brandBg)}>
+                    <Icon className="h-12 w-12 text-foreground/80" />
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    Last sync: {formatTimestamp(int.lastSync)}
-                  </p>
-                </CardContent>
-              </Card>
-            );
-          })}
+                  <CardContent className="p-4 space-y-3">
+                    <p className="font-semibold">{int.name}</p>
+                    <div className="flex items-center justify-between gap-2">
+                      <span
+                        className={cn(
+                          'text-xs font-medium px-2 py-0.5 rounded-full',
+                          int.status === 'connected'
+                            ? 'bg-status-warm/15 text-status-warm'
+                            : 'bg-muted text-muted-foreground'
+                        )}
+                      >
+                        {int.status === 'connected' ? 'Connected' : 'Disconnected'}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setExpandedSettings(expandedSettings === int.id ? null : int.id)
+                        }
+                      >
+                        Configure
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Last sync: {formatTimestamp(int.lastSync)}
+                    </p>
+                  </CardContent>
+                </Card>
+              );
+            })
+          )}
         </div>
       </section>
 
@@ -439,25 +473,27 @@ export default function IntegrationsPage(): React.ReactElement {
                 </SelectContent>
               </Select>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b bg-muted/50">
-                    <th className="text-left p-3 font-medium">Action</th>
-                    <th className="text-left p-3 font-medium">Status</th>
-                    <th className="text-left p-3 font-medium">Timestamp</th>
-                    <th className="text-left p-3 font-medium">Duration</th>
-                    <th className="text-left p-3 font-medium w-24" />
-                  </tr>
-                </thead>
-                <tbody>
+            {filteredLog.length === 0 ? (
+              <EmptyState
+                icon={Activity}
+                title="No sync activities yet."
+                description="Sync events will appear here once your integrations run."
+                className="py-10"
+              />
+            ) : (
+              <>
+                {/* Mobile: card list */}
+                <div className="md:hidden space-y-3 p-4">
                   {paginatedLog.map((entry) => (
-                    <tr key={entry.id} className="border-b last:border-0">
-                      <td className="p-3">{entry.action}</td>
-                      <td className="p-3">
+                    <div
+                      key={entry.id}
+                      className="rounded-lg border border-border bg-card p-4 space-y-2"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium text-sm">{entry.action}</span>
                         <span
                           className={cn(
-                            'text-xs font-medium px-2 py-0.5 rounded-full',
+                            'text-xs font-medium px-2 py-0.5 rounded-full shrink-0',
                             entry.status === 'success'
                               ? 'bg-status-warm/15 text-status-warm'
                               : 'bg-status-at-risk/15 text-status-at-risk'
@@ -465,22 +501,64 @@ export default function IntegrationsPage(): React.ReactElement {
                         >
                           {entry.status === 'success' ? 'Success' : 'Error'}
                         </span>
-                      </td>
-                      <td className="p-3 text-muted-foreground">
-                        {formatTimestamp(entry.timestamp)}
-                      </td>
-                      <td className="p-3">{formatDuration(entry.durationMs)}</td>
-                      <td className="p-3">
-                        <Button variant="ghost" size="sm" className="h-8">
-                          View Details
-                        </Button>
-                      </td>
-                    </tr>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {formatTimestamp(entry.timestamp)} · {formatDuration(entry.durationMs)}
+                      </p>
+                      {entry.details && (
+                        <p className="text-xs text-muted-foreground truncate" title={entry.details}>
+                          {entry.details}
+                        </p>
+                      )}
+                      <Button variant="ghost" size="sm" className="h-8 mt-1">
+                        View Details
+                      </Button>
+                    </div>
                   ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="flex items-center justify-between p-4 border-t">
+                </div>
+                {/* Desktop: table */}
+                <div className="hidden md:block overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b bg-muted/50">
+                        <th className="text-left p-3 font-medium">Action</th>
+                        <th className="text-left p-3 font-medium">Status</th>
+                        <th className="text-left p-3 font-medium">Timestamp</th>
+                        <th className="text-left p-3 font-medium">Duration</th>
+                        <th className="text-left p-3 font-medium w-24" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paginatedLog.map((entry) => (
+                        <tr key={entry.id} className="border-b last:border-0">
+                          <td className="p-3">{entry.action}</td>
+                          <td className="p-3">
+                            <span
+                              className={cn(
+                                'text-xs font-medium px-2 py-0.5 rounded-full',
+                                entry.status === 'success'
+                                  ? 'bg-status-warm/15 text-status-warm'
+                                  : 'bg-status-at-risk/15 text-status-at-risk'
+                              )}
+                            >
+                              {entry.status === 'success' ? 'Success' : 'Error'}
+                            </span>
+                          </td>
+                          <td className="p-3 text-muted-foreground">
+                            {formatTimestamp(entry.timestamp)}
+                          </td>
+                          <td className="p-3">{formatDuration(entry.durationMs)}</td>
+                          <td className="p-3">
+                            <Button variant="ghost" size="sm" className="h-8">
+                              View Details
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-4 border-t">
               <p className="text-xs text-muted-foreground">
                 Showing {syncLogPage * PAGE_SIZE + 1}–{Math.min((syncLogPage + 1) * PAGE_SIZE, filteredLog.length)} of {filteredLog.length}
               </p>
@@ -503,6 +581,8 @@ export default function IntegrationsPage(): React.ReactElement {
                 </Button>
               </div>
             </div>
+              </>
+            )}
           </CardContent>
         </Card>
       </section>

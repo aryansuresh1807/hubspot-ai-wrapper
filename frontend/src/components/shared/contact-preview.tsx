@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { Phone, Mail, UserCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Skeleton } from '@/components/shared/skeleton';
 import { cn } from '@/lib/utils';
 
 export interface ContactRecentNote {
@@ -20,6 +21,8 @@ export interface ContactPreviewContact {
 export interface ContactPreviewProps {
   contact: ContactPreviewContact | null | undefined;
   onViewAllNotes?: () => void;
+  /** When true, shows a skeleton loader instead of content. */
+  loading?: boolean;
   className?: string;
 }
 
@@ -46,8 +49,42 @@ const EmptyState = ({ className }: { className?: string }) => (
   </Card>
 );
 
+function ContactPreviewSkeletonContent() {
+  return (
+    <>
+      <CardHeader className="pb-3">
+        <Skeleton variant="text" className="h-6 w-2/3" />
+      </CardHeader>
+      <CardContent className="flex flex-col gap-6 pt-0">
+        <div className="flex flex-col gap-2">
+          <Skeleton variant="text" className="h-4 w-40" />
+          <Skeleton variant="text" className="h-4 w-48" />
+        </div>
+        <section className="flex flex-col gap-3">
+          <Skeleton variant="text" className="h-4 w-28" />
+          <div className="space-y-4">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="flex flex-col gap-1">
+                <Skeleton variant="text" className="h-3 w-16" />
+                <Skeleton variant="text" className="h-4 w-full" />
+              </div>
+            ))}
+          </div>
+        </section>
+      </CardContent>
+    </>
+  );
+}
+
 const ContactPreview = React.forwardRef<HTMLDivElement, ContactPreviewProps>(
-  ({ contact, onViewAllNotes, className }, ref) => {
+  ({ contact, onViewAllNotes, loading, className }, ref) => {
+    if (loading) {
+      return (
+        <Card ref={ref} className={cn('overflow-hidden', className)}>
+          <ContactPreviewSkeletonContent />
+        </Card>
+      );
+    }
     if (contact == null) {
       return <EmptyState className={className} />;
     }

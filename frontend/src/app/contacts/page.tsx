@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { Sparkles, Loader2, X } from 'lucide-react';
+import { Sparkles, Loader2, X, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -17,12 +17,14 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusChip, type RelationshipStatus } from '@/components/shared/status-chip';
+import { EmptyState } from '@/components/shared/empty-state';
 import {
   Toast,
   ToastTitle,
   ToastDescription,
   ToastClose,
 } from '@/components/ui/toast';
+import { useContactStore } from '@/lib/store/contact-store';
 import { cn } from '@/lib/utils';
 
 // ---------------------------------------------------------------------------
@@ -377,8 +379,22 @@ function ContactTabContent(): React.ReactElement {
     if (field === 'followUp') setSuggestedFollowUp(value);
   };
 
+  const contacts = useContactStore((s) => s.contacts);
+
   return (
     <div className="space-y-6">
+      {contacts.length === 0 && (
+        <Card className="border-dashed">
+          <CardContent className="p-0">
+            <EmptyState
+              icon={Users}
+              title="No contacts found. Add a contact to get started."
+              description="Create your first contact using the form below or extract details from an email or text."
+              action={{ label: 'Add contact', onClick: () => {} }}
+            />
+          </CardContent>
+        </Card>
+      )}
       {/* AI Extraction */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Card>

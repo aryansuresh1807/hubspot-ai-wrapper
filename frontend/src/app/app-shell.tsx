@@ -50,11 +50,11 @@ export function AppShell({
         />
       )}
 
-      {/* Sidebar: hidden on mobile unless open, always visible on md+ */}
+      {/* Sidebar: hidden on mobile unless open (hamburger), always visible on md+ */}
       <Sidebar
         className={cn(
           'hidden md:flex',
-          mobileMenuOpen && 'flex md:hidden'
+          mobileMenuOpen && 'max-md:flex'
         )}
         onClose={() => setMobileMenuOpen(false)}
       />

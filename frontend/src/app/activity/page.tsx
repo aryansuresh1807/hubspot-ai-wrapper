@@ -10,6 +10,7 @@ import {
   FileText,
   UserPlus,
   Building2,
+  Loader2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -30,6 +31,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/shared/skeleton';
 import { cn } from '@/lib/utils';
 
 // ---------------------------------------------------------------------------
@@ -220,6 +222,7 @@ export default function ActivityPage(): React.ReactElement {
   const [selectedDraftTone, setSelectedDraftTone] = React.useState<DraftTone>('formal');
   const [summaryDraft, setSummaryDraft] = React.useState(MOCK_AI_SUMMARY);
   const [submitConfirmOpen, setSubmitConfirmOpen] = React.useState(false);
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [previewEditOpen, setPreviewEditOpen] = React.useState(false);
   const [previewContent, setPreviewContent] = React.useState(MOCK_DRAFTS.formal);
   const [isRegenerating, setIsRegenerating] = React.useState(false);
@@ -270,9 +273,9 @@ export default function ActivityPage(): React.ReactElement {
   const CHAR_LIMIT = 10000;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[2fr_3fr] gap-8">
-      {/* LEFT COLUMN - 40% */}
-      <div className="flex flex-col gap-6 lg:w-[40%]">
+    <div className="grid grid-cols-1 lg:grid-cols-[2fr_3fr] gap-6 lg:gap-8">
+      {/* LEFT COLUMN - stacks on mobile, 40% on desktop */}
+      <div className="flex flex-col gap-6 w-full lg:max-w-[40%]">
         {/* 1. Note Editor */}
         <Card>
           <CardHeader>
@@ -300,7 +303,11 @@ export default function ActivityPage(): React.ReactElement {
                 disabled={processingStep !== 'idle' && processingStep !== 'ready'}
                 className="gap-2"
               >
-                <Sparkles className="h-4 w-4" />
+                {(processingStep === 'sent' || processingStep === 'extracting') ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Sparkles className="h-4 w-4" />
+                )}
                 Send for Processing
               </Button>
               <Button variant="secondary">Save Draft</Button>
@@ -386,7 +393,7 @@ export default function ActivityPage(): React.ReactElement {
                 onChange={setContactSearch}
                 placeholder="Search contacts..."
                 options={MOCK_CONTACTS}
-                getOptionLabel={(o) => (o as { name: string }).name}
+                getOptionLabel={(o) => (o as unknown as { name: string }).name}
                 onSelect={(o) => setSelectedContactId(o.id)}
                 className="mt-1"
               />
@@ -398,7 +405,7 @@ export default function ActivityPage(): React.ReactElement {
                 onChange={setAccountSearch}
                 placeholder="Search accounts..."
                 options={MOCK_ACCOUNTS}
-                getOptionLabel={(o) => (o as { name: string }).name}
+                getOptionLabel={(o) => (o as unknown as { name: string }).name}
                 onSelect={(o) => setSelectedAccountId(o.id)}
                 className="mt-1"
               />
@@ -476,16 +483,27 @@ export default function ActivityPage(): React.ReactElement {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-base">Communication History Summary</CardTitle>
-            <div className="flex gap-1">
-              <Button variant="ghost" size="sm">Use Draft</Button>
-              <Button variant="ghost" size="sm">Edit</Button>
-              <Button variant="ghost" size="sm" className="text-status-at-risk">Discard</Button>
-            </div>
+            {processingStep !== 'extracting' && (
+              <div className="flex gap-1">
+                <Button variant="ghost" size="sm">Use Draft</Button>
+                <Button variant="ghost" size="sm">Edit</Button>
+                <Button variant="ghost" size="sm" className="text-status-at-risk">Discard</Button>
+              </div>
+            )}
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground whitespace-pre-wrap">
-              {summaryDraft}
-            </p>
+            {processingStep === 'extracting' ? (
+              <div className="space-y-2">
+                <Skeleton variant="text" className="h-3 w-full" />
+                <Skeleton variant="text" className="h-3 w-full" />
+                <Skeleton variant="text" className="h-3 w-4/5" />
+                <Skeleton variant="text" className="h-3 w-3/4" />
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                {summaryDraft}
+              </p>
+            )}
           </CardContent>
         </Card>
 
@@ -495,6 +513,19 @@ export default function ActivityPage(): React.ReactElement {
             <CardTitle className="text-base">Recognized Dates</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            {processingStep === 'extracting' ? (
+              <div className="space-y-4">
+                <div>
+                  <Skeleton variant="text" className="h-4 w-20 mb-2" />
+                  <Skeleton variant="rectangle" className="h-9 w-full max-w-[180px]" />
+                </div>
+                <div>
+                  <Skeleton variant="text" className="h-4 w-20 mb-2" />
+                  <Skeleton variant="rectangle" className="h-9 w-full max-w-[180px]" />
+                </div>
+              </div>
+            ) : (
+            <>
             <div className="flex flex-wrap items-end gap-2">
               <div className="flex-1 min-w-[140px]">
                 <Label>Start Date</Label>
@@ -537,6 +568,8 @@ export default function ActivityPage(): React.ReactElement {
               </Button>
               <Button variant="ghost" size="sm">Override</Button>
             </div>
+            </>
+            )}
           </CardContent>
         </Card>
 
@@ -546,6 +579,17 @@ export default function ActivityPage(): React.ReactElement {
             <CardTitle className="text-base">Recommended Touch Dates</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
+            {processingStep === 'extracting' ? (
+              <div className="space-y-3">
+                {[1, 2].map((i) => (
+                  <div key={i} className="rounded-md border border-border p-3 flex flex-col gap-2">
+                    <Skeleton variant="text" className="h-4 w-32" />
+                    <Skeleton variant="text" className="h-3 w-full" />
+                  </div>
+                ))}
+              </div>
+            ) : (
+            <>
             {MOCK_RECOMMENDED_DATES.map((rec) => (
               <div
                 key={rec.id}
@@ -560,6 +604,8 @@ export default function ActivityPage(): React.ReactElement {
                 </Button>
               </div>
             ))}
+            </>
+            )}
           </CardContent>
         </Card>
 
@@ -569,6 +615,27 @@ export default function ActivityPage(): React.ReactElement {
             <CardTitle className="text-base">Extracted Metadata</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            {processingStep === 'extracting' ? (
+              <div className="space-y-4">
+                <div>
+                  <Skeleton variant="text" className="h-4 w-16 mb-2" />
+                  <Skeleton variant="rectangle" className="h-9 w-full" />
+                </div>
+                <div>
+                  <Skeleton variant="text" className="h-4 w-24 mb-2" />
+                  <Skeleton variant="rectangle" className="h-9 w-full" />
+                </div>
+                <div>
+                  <Skeleton variant="text" className="h-4 w-28 mb-2" />
+                  <Skeleton variant="rectangle" className="h-9 w-full" />
+                </div>
+                <div>
+                  <Skeleton variant="text" className="h-4 w-24 mb-2" />
+                  <Skeleton variant="rectangle" className="h-10 w-full" />
+                </div>
+              </div>
+            ) : (
+            <>
             <div>
               <Label className="flex items-center gap-2">
                 Subject
@@ -624,6 +691,8 @@ export default function ActivityPage(): React.ReactElement {
                 </SelectContent>
               </Select>
             </div>
+            </>
+            )}
           </CardContent>
         </Card>
 
@@ -633,6 +702,20 @@ export default function ActivityPage(): React.ReactElement {
             <CardTitle className="text-base">AI-Generated Drafts</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
+            {processingStep === 'extracting' ? (
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  {[1, 2, 3].map((i) => (
+                    <Skeleton key={i} variant="rectangle" className="h-12 w-full" />
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <Skeleton variant="rectangle" className="h-9 w-28" />
+                  <Skeleton variant="rectangle" className="h-9 w-24" />
+                </div>
+              </div>
+            ) : (
+            <>
             <div className="space-y-2" role="radiogroup" aria-label="Draft tone">
               {(['formal', 'concise', 'warm'] as const).map((tone) => (
                 <label
@@ -673,6 +756,8 @@ export default function ActivityPage(): React.ReactElement {
                 Regenerate
               </Button>
             </div>
+            </>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -688,15 +773,23 @@ export default function ActivityPage(): React.ReactElement {
             dashboard.
           </p>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setSubmitConfirmOpen(false)}>
+            <Button variant="outline" onClick={() => setSubmitConfirmOpen(false)} disabled={isSubmitting}>
               Cancel
             </Button>
             <Button
-              onClick={() => {
-                setSubmitConfirmOpen(false);
-                // TODO: submit
+              onClick={async () => {
+                setIsSubmitting(true);
+                try {
+                  await new Promise((r) => setTimeout(r, 800));
+                  setSubmitConfirmOpen(false);
+                } finally {
+                  setIsSubmitting(false);
+                }
               }}
+              disabled={isSubmitting}
+              className="gap-2"
             >
+              {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               Submit
             </Button>
           </DialogFooter>

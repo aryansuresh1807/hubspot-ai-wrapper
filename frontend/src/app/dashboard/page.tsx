@@ -11,6 +11,8 @@ import {
   MessageSquare,
   Plus,
   ArrowUpDown,
+  ClipboardList,
+  SearchX,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -42,6 +44,8 @@ import {
   ContactPreview,
   type ContactPreviewContact,
 } from '@/components/shared/contact-preview';
+import { Skeleton } from '@/components/shared/skeleton';
+import { EmptyState } from '@/components/shared/empty-state';
 import type { RelationshipStatus } from '@/components/shared/status-chip';
 import type { ProcessingStatusType } from '@/components/shared/processing-status';
 import { cn } from '@/lib/utils';
@@ -341,34 +345,75 @@ const DEFAULT_FILTER: FilterState = {
 
 function ActivityCardSkeleton() {
   return (
-    <Card className="animate-pulse">
+    <Card>
       <CardContent className="p-4 flex flex-col gap-3">
-        <div className="h-4 bg-muted rounded w-3/4" />
-        <div className="h-3 bg-muted rounded w-1/2" />
-        <div className="h-3 bg-muted rounded w-full" />
-        <div className="h-10 bg-muted rounded w-full" />
-        <div className="h-6 bg-muted rounded w-1/4" />
+        <Skeleton variant="text" className="h-4 w-3/4" />
+        <Skeleton variant="text" className="h-3 w-1/2" />
+        <Skeleton variant="text" className="h-3 w-full" />
+        <Skeleton variant="rectangle" className="h-10 w-full" />
+        <Skeleton variant="text" className="h-6 w-1/4" />
       </CardContent>
     </Card>
   );
 }
 
-function EmptyActivityList({ hasFilters }: { hasFilters: boolean }) {
+function CommunicationSummarySkeleton() {
   return (
-    <Card className="border-dashed">
-      <CardContent className="flex flex-col items-center justify-center py-12 px-4 text-center">
-        <p className="text-sm font-medium text-muted-foreground">
-          {hasFilters
-            ? 'No activities match your filters. Try adjusting or clearing filters.'
-            : 'No activities yet. Create one to get started.'}
-        </p>
-        <p className="text-xs text-muted-foreground mt-1">
-          {hasFilters ? 'Use "Clear" in the filter dialog to reset.' : 'Click "New Activity" above.'}
-        </p>
+    <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-3 gap-2">
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="flex flex-col items-center rounded-md border border-border bg-muted/30 p-3">
+            <Skeleton variant="circle" className="h-4 w-4 mb-1" />
+            <Skeleton variant="text" className="h-6 w-8 mb-1" />
+            <Skeleton variant="text" className="h-3 w-12" />
+          </div>
+        ))}
+      </div>
+      <div className="space-y-2">
+        <Skeleton variant="text" className="h-4 w-full" />
+        <Skeleton variant="text" className="h-4 w-4/5" />
+      </div>
+      <div>
+        <Skeleton variant="text" className="h-4 w-24 mb-2" />
+        <ul className="space-y-2">
+          {[1, 2, 3, 4].map((i) => (
+            <li key={i}>
+              <Skeleton variant="text" className="h-3 w-full" />
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+function ContactPreviewSkeleton() {
+  return (
+    <Card className="overflow-hidden">
+      <CardHeader className="pb-3">
+        <Skeleton variant="text" className="h-6 w-2/3" />
+      </CardHeader>
+      <CardContent className="flex flex-col gap-6 pt-0">
+        <div className="flex flex-col gap-2">
+          <Skeleton variant="text" className="h-4 w-40" />
+          <Skeleton variant="text" className="h-4 w-48" />
+        </div>
+        <section className="flex flex-col gap-3">
+          <Skeleton variant="text" className="h-4 w-28" />
+          <div className="space-y-4">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="flex flex-col gap-1">
+                <Skeleton variant="text" className="h-3 w-16" />
+                <Skeleton variant="text" className="h-4 w-full" />
+              </div>
+            ))}
+          </div>
+        </section>
       </CardContent>
     </Card>
   );
 }
+
 
 // ---------------------------------------------------------------------------
 // Page
@@ -570,7 +615,7 @@ export default function DashboardPage(): React.ReactElement {
                 ))}
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label htmlFor="date-from">Date from</Label>
                 <Input
@@ -604,10 +649,10 @@ export default function DashboardPage(): React.ReactElement {
         </DialogContent>
       </Dialog>
 
-      {/* Three-column grid */}
-      <div className="grid gap-4 grid-cols-1 lg:grid-cols-[2fr_1.5fr_1.5fr]">
-        {/* Left panel - Activity cards */}
-        <section className="flex flex-col min-h-0 lg:min-h-[calc(100vh-12rem)] lg:w-[40%] lg:max-w-[40%]">
+      {/* Responsive: mobile stack, tablet 2-col, desktop 12-col grid */}
+      <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-12">
+        {/* Left panel - Activity cards (6 cols on desktop) */}
+        <section className="flex flex-col min-h-0 md:min-h-0 lg:min-h-[calc(100vh-12rem)] lg:col-span-6">
           <div className="flex flex-wrap items-center gap-2 mb-4">
             <Button
               variant="outline"
@@ -648,12 +693,33 @@ export default function DashboardPage(): React.ReactElement {
           <div className="flex-1 overflow-y-auto space-y-3 pr-2">
             {isLoading ? (
               <>
-                {[1, 2, 3].map((i) => (
+                {[1, 2, 3, 4, 5].map((i) => (
                   <ActivityCardSkeleton key={i} />
                 ))}
               </>
             ) : sortedItems.length === 0 ? (
-              <EmptyActivityList hasFilters={hasActiveFilters || !!datePickerValue} />
+              <Card className="border-dashed">
+                <CardContent className="p-0">
+                  <EmptyState
+                    icon={hasActiveFilters || datePickerValue ? SearchX : ClipboardList}
+                    title={
+                      hasActiveFilters || datePickerValue
+                        ? 'No activities match your filters.'
+                        : 'No activities yet. Create your first activity!'
+                    }
+                    description={
+                      hasActiveFilters || datePickerValue
+                        ? 'Try adjusting or clearing filters to see more results.'
+                        : 'Add a note or activity to get started.'
+                    }
+                    action={
+                      hasActiveFilters || datePickerValue
+                        ? { label: 'Clear filters', onClick: () => { handleClearFilter(); setFilterDialogOpen(false); } }
+                        : { label: 'New Activity', onClick: () => router.push('/activity') }
+                    }
+                  />
+                </CardContent>
+              </Card>
             ) : (
               sortedItems.map((item) => (
                 <ActivityCard
@@ -670,14 +736,16 @@ export default function DashboardPage(): React.ReactElement {
           </div>
         </section>
 
-        {/* Middle panel - Communication Summary */}
-        <section className="flex flex-col lg:w-[30%] lg:max-w-[30%]">
+        {/* Middle panel - Communication Summary (3 cols on desktop) */}
+        <section className="flex flex-col lg:col-span-3">
           <Card className="flex-1 flex flex-col min-h-0">
             <CardHeader className="pb-2">
               <h2 className="text-lg font-semibold">Communication Summary</h2>
             </CardHeader>
             <CardContent className="flex flex-col gap-4 flex-1 min-h-0">
-              {selectedSummary ? (
+              {isLoading ? (
+                <CommunicationSummarySkeleton />
+              ) : selectedSummary ? (
                 <>
                   <div className="grid grid-cols-3 gap-2">
                     <div className="flex flex-col items-center rounded-md border border-border bg-muted/50 p-3">
@@ -730,9 +798,13 @@ export default function DashboardPage(): React.ReactElement {
           </Card>
         </section>
 
-        {/* Right panel - Contact preview */}
-        <section className="flex flex-col lg:w-[30%] lg:max-w-[30%]">
-          <ContactPreview contact={selectedContact} />
+        {/* Right panel - Contact preview (full width on tablet below the 2 cols, 3 cols on desktop) */}
+        <section className="flex flex-col md:col-span-2 lg:col-span-3">
+          {isLoading ? (
+            <ContactPreviewSkeleton />
+          ) : (
+            <ContactPreview contact={selectedContact} />
+          )}
         </section>
       </div>
 
