@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { DM_Sans } from 'next/font/google';
 import './globals.css';
 import { Providers } from './providers';
+import { AppShell } from './app-shell';
 
 const dmSans = DM_Sans({
   subsets: ['latin'],
@@ -16,13 +17,15 @@ export const metadata: Metadata = {
 
 export default function RootLayout({
   children,
-}: {
+}: Readonly<{
   children: React.ReactNode;
-}) {
+}>): React.ReactElement {
   return (
     <html lang="en" className={dmSans.variable}>
       <body className="font-sans antialiased">
-        <Providers>{children}</Providers>
+        <Providers>
+          <AppShell>{children}</AppShell>
+        </Providers>
       </body>
     </html>
   );
