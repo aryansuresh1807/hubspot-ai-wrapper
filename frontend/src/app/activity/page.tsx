@@ -571,9 +571,9 @@ export default function ActivityPage(): React.ReactElement {
   const CHAR_LIMIT = 10000;
 
   return (
-    <div className="h-full flex overflow-hidden">
-      {/* Left sidebar - 400px, scrollable */}
-      <div className="w-[400px] shrink-0 overflow-y-auto bg-surface border-r border-border">
+    <div className="h-full flex overflow-hidden gap-0">
+      {/* Left column - expands to fill space up to the right column (min 400px) */}
+      <div className="flex-1 min-w-[400px] overflow-y-auto bg-surface border-r border-border">
         <div className="flex flex-col gap-6 p-4">
         {/* 1. Note Editor */}
         <Card>
@@ -952,9 +952,9 @@ export default function ActivityPage(): React.ReactElement {
         </div>
       </div>
 
-      {/* Right content - flex-1, scrollable */}
-      <div className="flex-1 flex flex-col overflow-y-auto p-4">
-        <div className="max-w-3xl mx-auto w-full flex flex-col gap-6">
+      {/* Right column - fixed content width (48rem = max-w-3xl), fills rest of screen */}
+      <div className="w-[48rem] shrink-0 flex flex-col overflow-y-auto p-4 min-w-0">
+        <div className="w-full max-w-3xl flex flex-col gap-6">
         {/* 1. Summary of Communication History - first section */}
         <Card className="border-primary/30 bg-primary/5">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
