@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { DM_Sans } from 'next/font/google';
 import './globals.css';
 import { Providers } from './providers';
+import { ToastWrapper } from './toast-wrapper';
 import { AppShell } from './app-shell';
 
 const dmSans = DM_Sans({
@@ -24,7 +25,9 @@ export default function RootLayout({
     <html lang="en" className={dmSans.variable}>
       <body className="font-sans antialiased">
         <Providers>
-          <AppShell>{children}</AppShell>
+          <ToastWrapper>
+            <AppShell>{children}</AppShell>
+          </ToastWrapper>
         </Providers>
       </body>
     </html>

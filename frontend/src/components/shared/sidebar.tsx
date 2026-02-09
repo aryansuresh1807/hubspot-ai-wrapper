@@ -20,7 +20,7 @@ import {
 import { cn } from '@/lib/utils';
 
 const NAV_ITEMS: { path: string; label: string; icon: LucideIcon }[] = [
-  { path: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/activity', label: 'Activity', icon: FileText },
   { path: '/contacts', label: 'Contacts', icon: Users },
   { path: '/integrations', label: 'Integrations', icon: Plug },
