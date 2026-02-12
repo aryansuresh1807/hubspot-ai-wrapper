@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import ProtectedRoute from '@/components/ProtectedRoute';
 import {
   useSettingsStore,
   type DraftTone,
@@ -35,7 +36,8 @@ import {
   ToastClose,
 } from '@/components/ui/toast';
 import { StatusChip } from '@/components/shared/status-chip';
-import { Check } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { Check, LogOut } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -93,6 +95,7 @@ export default function SettingsPage(): React.ReactElement {
   const save = useSettingsStore((s) => s.save);
   const resetToDefaults = useSettingsStore((s) => s.resetToDefaults);
   const isDirty = useSettingsStore((s) => s.isDirty);
+  const { signOut, user } = useAuth();
 
   const [resetDialogOpen, setResetDialogOpen] = React.useState(false);
   const [savedFeedback, setSavedFeedback] = React.useState(false);
@@ -131,6 +134,7 @@ export default function SettingsPage(): React.ReactElement {
   }, [dirty]);
 
   return (
+    <ProtectedRoute>
     <div className="space-y-8">
       <header>
         <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
@@ -431,6 +435,36 @@ export default function SettingsPage(): React.ReactElement {
         </Button>
       </div>
 
+      {/* Account / Sign out */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Account</CardTitle>
+          <p className="text-sm text-muted-foreground mt-1">
+            Signed in to your account. Sign out to end your session.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {(user?.user_metadata?.full_name || user?.email) && (
+            <div className="text-sm">
+              {user?.user_metadata?.full_name && (
+                <p className="font-medium text-foreground">{user.user_metadata.full_name}</p>
+              )}
+              {user?.email && (
+                <p className="text-muted-foreground">{user.email}</p>
+              )}
+            </div>
+          )}
+          <Button
+            variant="outline"
+            className="gap-2 text-status-at-risk border-status-at-risk/50 hover:bg-status-at-risk/10 hover:text-status-at-risk"
+            onClick={() => signOut()}
+          >
+            <LogOut className="h-4 w-4" />
+            Sign Out
+          </Button>
+        </CardContent>
+      </Card>
+
       {/* Reset confirmation */}
       <Dialog open={resetDialogOpen} onOpenChange={setResetDialogOpen}>
         <DialogContent>
@@ -461,5 +495,6 @@ export default function SettingsPage(): React.ReactElement {
         <ToastClose />
       </Toast>
     </div>
+    </ProtectedRoute>
   );
 }

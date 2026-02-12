@@ -4,9 +4,10 @@ import * as React from 'react';
 import { usePathname } from 'next/navigation';
 import { Sidebar } from '@/components/shared/sidebar';
 import { Topbar } from '@/components/shared/topbar';
+import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 
-const AUTH_PATH_PREFIXES = ['/login', '/sign-in', '/signin', '/auth'];
+const AUTH_PATH_PREFIXES = ['/login', '/sign-in', '/signin', '/signup', '/forgot-password', '/reset-password', '/auth'];
 
 function isAuthRoute(pathname: string): boolean {
   return AUTH_PATH_PREFIXES.some(
@@ -16,21 +17,30 @@ function isAuthRoute(pathname: string): boolean {
 
 export interface AppShellProps {
   children: React.ReactNode;
-  /** Optional user for Topbar (name, email) */
+  /** Optional override for Topbar user (defaults to useAuth().user) */
   user?: { name?: string | null; email?: string | null } | null;
-  /** Called when user clicks Sign Out in Topbar */
+  /** Optional override for Sign Out (defaults to useAuth().signOut) */
   onSignOut?: () => void;
   className?: string;
 }
 
 export function AppShell({
   children,
-  user,
-  onSignOut,
+  user: userProp,
+  onSignOut: onSignOutProp,
   className,
 }: AppShellProps): React.ReactElement {
   const pathname = usePathname();
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
+  const { user: authUser, signOut } = useAuth();
+
+  const user = userProp ?? (authUser
+    ? {
+        name: authUser.user_metadata?.full_name ?? null,
+        email: authUser.email ?? null,
+      }
+    : null);
+  const onSignOut = onSignOutProp ?? signOut;
 
   const isAuth = isAuthRoute(pathname ?? '');
 

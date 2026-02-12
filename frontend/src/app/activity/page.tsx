@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
+import ProtectedRoute from '@/components/ProtectedRoute';
 import {
   Sparkles,
   AlertTriangle,
@@ -571,6 +572,7 @@ export default function ActivityPage(): React.ReactElement {
   const CHAR_LIMIT = 10000;
 
   return (
+    <ProtectedRoute>
     <div className="h-full flex overflow-hidden gap-0">
       {/* Left column - expands to fill space up to the right column (min 400px) */}
       <div className="flex-1 min-w-[400px] overflow-y-auto bg-surface border-r border-border">
@@ -1418,5 +1420,6 @@ export default function ActivityPage(): React.ReactElement {
         </DialogContent>
       </Dialog>
     </div>
+    </ProtectedRoute>
   );
 }

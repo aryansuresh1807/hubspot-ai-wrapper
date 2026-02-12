@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { DM_Sans } from 'next/font/google';
 import './globals.css';
+import { AuthProvider } from '@/contexts/AuthContext';
 import { Providers } from './providers';
 import { ToastWrapper } from './toast-wrapper';
 import { AppShell } from './app-shell';
@@ -24,11 +25,13 @@ export default function RootLayout({
   return (
     <html lang="en" className={dmSans.variable}>
       <body className="font-sans antialiased">
-        <Providers>
-          <ToastWrapper>
-            <AppShell>{children}</AppShell>
-          </ToastWrapper>
-        </Providers>
+        <AuthProvider>
+          <Providers>
+            <ToastWrapper>
+              <AppShell>{children}</AppShell>
+            </ToastWrapper>
+          </Providers>
+        </AuthProvider>
       </body>
     </html>
   );

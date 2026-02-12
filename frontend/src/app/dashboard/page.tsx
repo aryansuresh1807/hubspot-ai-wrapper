@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
+import ProtectedRoute from '@/components/ProtectedRoute';
 import { useRouter } from 'next/navigation';
 import {
   Filter,
@@ -544,6 +545,7 @@ export default function DashboardPage(): React.ReactElement {
   );
 
   return (
+    <ProtectedRoute>
     <div className="flex flex-col gap-6">
       {/* Page Header */}
       <header>
@@ -832,5 +834,6 @@ export default function DashboardPage(): React.ReactElement {
         <ToastClose />
       </Toast>
     </div>
+    </ProtectedRoute>
   );
 }

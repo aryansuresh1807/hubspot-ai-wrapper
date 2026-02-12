@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { Suspense } from 'react';
+import ProtectedRoute from '@/components/ProtectedRoute';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Sparkles, Loader2, X, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -1002,8 +1003,10 @@ function ContactsPageFallback(): React.ReactElement {
 
 export default function ContactsPage(): React.ReactElement {
   return (
-    <Suspense fallback={<ContactsPageFallback />}>
-      <ContactsPageContent />
-    </Suspense>
+    <ProtectedRoute>
+      <Suspense fallback={<ContactsPageFallback />}>
+        <ContactsPageContent />
+      </Suspense>
+    </ProtectedRoute>
   );
 }

@@ -4,10 +4,11 @@
  */
 
 const getBaseUrl = (): string => {
-  if (typeof window !== 'undefined') {
-    return process.env.NEXT_PUBLIC_API_URL ?? '';
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+  if (!apiUrl) {
+    throw new Error('NEXT_PUBLIC_API_URL is not configured. Please set it in your environment variables.');
   }
-  return process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+  return apiUrl;
 };
 
 export type ApiError = {

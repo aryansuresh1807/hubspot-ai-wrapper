@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import ProtectedRoute from '@/components/ProtectedRoute';
 import {
   Building2,
   Mail,
@@ -214,6 +215,7 @@ export default function IntegrationsPage(): React.ReactElement {
   const mockWebhookUrl = 'https://api.example.com/webhooks/hubspot';
 
   return (
+    <ProtectedRoute>
     <div className="space-y-8">
       <header>
         <h1 className="text-2xl font-bold tracking-tight">Integrations</h1>
@@ -597,5 +599,6 @@ export default function IntegrationsPage(): React.ReactElement {
         <ToastClose />
       </Toast>
     </div>
+    </ProtectedRoute>
   );
 }
