@@ -15,7 +15,6 @@ from app.services.llm_service import (
 )
 from app.services.supabase_service import (
     SupabaseService,
-    SupabaseServiceError,
     get_supabase_service,
 )
 
@@ -30,6 +29,5 @@ __all__ = [
     "TouchDateRecommendationResult",
     "get_llm_service",
     "SupabaseService",
-    "SupabaseServiceError",
     "get_supabase_service",
 ]

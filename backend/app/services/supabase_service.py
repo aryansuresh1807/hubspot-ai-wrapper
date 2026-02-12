@@ -1,131 +1,204 @@
 """
-Supabase client: auth helpers, database operations, session management.
+Supabase client: auth (sign up, sign in, password reset), token verification, user profiles.
 """
 
-from typing import Any
-from uuid import UUID
+import logging
+from typing import Any, Dict, Optional
+
+from fastapi import HTTPException, status
+from supabase import Client, create_client
 
 from app.core.config import get_settings
 
-
-class SupabaseServiceError(Exception):
-    """Raised when a Supabase operation fails."""
-
-    def __init__(self, message: str, detail: Any = None):
-        self.message = message
-        self.detail = detail
-        super().__init__(message)
+logger = logging.getLogger(__name__)
+settings = get_settings()
 
 
 class SupabaseService:
-    """
-    Supabase service for auth, DB access, and session management.
-    """
-
     def __init__(self) -> None:
-        settings = get_settings()
-        self._url = settings.supabase_url
-        self._service_key = settings.supabase_service_key
-        self._client: Any = None  # Supabase client instance
+        self.client: Client = create_client(
+            settings.SUPABASE_URL,
+            settings.SUPABASE_SERVICE_KEY,
+        )
+        self.auth_client: Client = create_client(
+            settings.SUPABASE_URL,
+            settings.SUPABASE_ANON_KEY,
+        )
 
-    # -------------------------------------------------------------------------
-    # Client lifecycle
-    # -------------------------------------------------------------------------
+    async def sign_up(self, email: str, password: str, full_name: str) -> Dict[str, Any]:
+        """Register a new user."""
+        try:
+            response = self.auth_client.auth.sign_up(
+                {
+                    "email": email,
+                    "password": password,
+                    "options": {
+                        "data": {
+                            "full_name": full_name,
+                        }
+                    },
+                }
+            )
 
-    def get_client(self) -> Any:
-        """Return or create Supabase client (service role). Implement."""
-        raise NotImplementedError
+            if not response.user:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Failed to create user",
+                )
 
-    # -------------------------------------------------------------------------
-    # Authentication helpers
-    # -------------------------------------------------------------------------
+            return {
+                "user": response.user,
+                "session": response.session,
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Signup error: %s", str(e))
+            if "already registered" in str(e).lower():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email already registered",
+                )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=str(e),
+            )
 
-    def get_user_by_id(self, user_id: UUID) -> dict[str, Any] | None:
-        """Fetch user from auth.users by id. Implement via Admin API or RPC."""
-        raise NotImplementedError
+    async def sign_in(self, email: str, password: str) -> Dict[str, Any]:
+        """Sign in a user."""
+        try:
+            response = self.auth_client.auth.sign_in_with_password(
+                {
+                    "email": email,
+                    "password": password,
+                }
+            )
 
-    def verify_token(self, access_token: str) -> dict[str, Any] | None:
-        """Verify JWT and return payload (e.g. sub, email). Implement."""
-        raise NotImplementedError
+            if not response.user or not response.session:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid credentials",
+                )
 
-    # -------------------------------------------------------------------------
-    # Session management
-    # -------------------------------------------------------------------------
+            return {
+                "user": response.user,
+                "session": response.session,
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Signin error: %s", str(e))
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid email or password",
+            )
 
-    def create_session(
-        self,
-        user_id: UUID,
-        expires_at: Any,
-        metadata: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Insert row into public.sessions. Returns created session."""
-        raise NotImplementedError
+    async def sign_out(self, access_token: str) -> bool:
+        """Sign out a user."""
+        try:
+            self.client.auth.sign_out()
+            return True
+        except Exception as e:
+            logger.error("Signout error: %s", str(e))
+            return False
 
-    def get_session(self, session_id: UUID) -> dict[str, Any] | None:
-        """Get session by id. Returns None if not found or expired."""
-        raise NotImplementedError
+    async def verify_token(self, access_token: str) -> Dict[str, Any]:
+        """Verify access token and return user."""
+        try:
+            response = self.client.auth.get_user(access_token)
 
-    def update_session(
-        self,
-        session_id: UUID,
-        expires_at: Any | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> dict[str, Any] | None:
-        """Update session. Returns updated row or None."""
-        raise NotImplementedError
+            if not response.user:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid or expired token",
+                )
 
-    def delete_session(self, session_id: UUID) -> bool:
-        """Delete session. Returns True if deleted."""
-        raise NotImplementedError
+            return response.user
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Token verification error: %s", str(e))
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired token",
+            )
 
-    def delete_expired_sessions(self, older_than_seconds: int = 0) -> int:
-        """Remove sessions past expires_at. Returns count deleted. Implement."""
-        raise NotImplementedError
+    async def get_user_profile(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Get user profile from database."""
+        try:
+            response = (
+                self.client.table("user_profiles")
+                .select("*")
+                .eq("id", user_id)
+                .execute()
+            )
 
-    # -------------------------------------------------------------------------
-    # Database operations (generic / tables)
-    # -------------------------------------------------------------------------
+            if response.data and len(response.data) > 0:
+                return response.data[0]
+            return None
+        except Exception as e:
+            logger.error("Get profile error: %s", str(e))
+            return None
 
-    def insert(self, table: str, row: dict[str, Any]) -> dict[str, Any]:
-        """Insert one row into table. Returns inserted row (with id, timestamps)."""
-        raise NotImplementedError
+    async def update_user_profile(
+        self, user_id: str, data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Update user profile."""
+        try:
+            response = (
+                self.client.table("user_profiles")
+                .update(data)
+                .eq("id", user_id)
+                .execute()
+            )
 
-    def select_one(
-        self,
-        table: str,
-        columns: str | list[str] | None = None,
-        filters: dict[str, Any] | None = None,
-    ) -> dict[str, Any] | None:
-        """Select single row. Returns None if not found."""
-        raise NotImplementedError
+            if response.data and len(response.data) > 0:
+                return response.data[0]
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Profile not found",
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Update profile error: %s", str(e))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to update profile",
+            )
 
-    def select_many(
-        self,
-        table: str,
-        columns: str | list[str] | None = None,
-        filters: dict[str, Any] | None = None,
-        order: str | None = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> list[dict[str, Any]]:
-        """Select rows with optional filters, order, limit, offset."""
-        raise NotImplementedError
+    async def send_password_reset(self, email: str) -> bool:
+        """Send password reset email."""
+        try:
+            self.auth_client.auth.reset_password_for_email(
+                email,
+                options={
+                    "redirect_to": f"{settings.frontend_url}/reset-password",
+                },
+            )
+            return True
+        except Exception as e:
+            logger.error("Password reset error: %s", str(e))
+            # Don't reveal if email exists
+            return True
 
-    def update(
-        self,
-        table: str,
-        id_value: Any,
-        id_column: str = "id",
-        data: dict[str, Any] | None = None,
-    ) -> dict[str, Any] | None:
-        """Update row by id. Returns updated row or None."""
-        raise NotImplementedError
-
-    def delete(self, table: str, id_value: Any, id_column: str = "id") -> bool:
-        """Delete row by id. Returns True if deleted."""
-        raise NotImplementedError
+    async def update_password(self, access_token: str, new_password: str) -> bool:
+        """Update user password."""
+        try:
+            self.client.auth.update_user(
+                {
+                    "password": new_password,
+                }
+            )
+            return True
+        except Exception as e:
+            logger.error("Password update error: %s", str(e))
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to update password",
+            )
 
 
 def get_supabase_service() -> SupabaseService:
-    """Dependency: return a SupabaseService instance."""
+    """Dependency for FastAPI."""
     return SupabaseService()

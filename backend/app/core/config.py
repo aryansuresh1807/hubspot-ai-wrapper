@@ -16,10 +16,19 @@ class Settings(BaseSettings):
     All fields optional with defaults for local dev; validate for production.
     """
 
+    # Supabase
+    SUPABASE_URL: str
+    SUPABASE_ANON_KEY: str
+    SUPABASE_SERVICE_KEY: str
+
+    # Application
+    ENVIRONMENT: str = "development"
+    CORS_ORIGINS: List[str] = ["http://localhost:3000"]
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        case_sensitive=False,
+        case_sensitive=True,
         extra="ignore",
     )
 
@@ -27,16 +36,6 @@ class Settings(BaseSettings):
     hubspot_api_key: str = Field(
         default="",
         description="HubSpot Private App access token or OAuth access token",
-    )
-
-    # Supabase
-    supabase_url: str = Field(
-        default="",
-        description="Supabase project URL (e.g. https://xxx.supabase.co)",
-    )
-    supabase_service_key: str = Field(
-        default="",
-        description="Supabase service role key (server-side only)",
     )
 
     # LLM (at least one required for AI features)
@@ -49,11 +48,7 @@ class Settings(BaseSettings):
         description="Direct PostgreSQL connection string if needed",
     )
 
-    # CORS
-    cors_origins: str = Field(
-        default="http://localhost:3000,http://127.0.0.1:3000",
-        description="Comma-separated list of allowed CORS origins",
-    )
+    # CORS (legacy / fallback)
     frontend_url: str = Field(
         default="http://localhost:3000",
         description="Frontend app URL for CORS and links",
@@ -61,9 +56,9 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins_list(self) -> List[str]:
-        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+        return list(self.CORS_ORIGINS)
 
-    @field_validator("cors_origins", "frontend_url", mode="before")
+    @field_validator("frontend_url", mode="before")
     @classmethod
     def strip_whitespace(cls, v: str) -> str:
         if isinstance(v, str):
@@ -76,9 +71,11 @@ class Settings(BaseSettings):
         Raises ValueError with missing keys.
         """
         missing: List[str] = []
-        if not self.supabase_url:
+        if not self.SUPABASE_URL:
             missing.append("SUPABASE_URL")
-        if not self.supabase_service_key:
+        if not self.SUPABASE_ANON_KEY:
+            missing.append("SUPABASE_ANON_KEY")
+        if not self.SUPABASE_SERVICE_KEY:
             missing.append("SUPABASE_SERVICE_KEY")
         if not self.hubspot_api_key:
             missing.append("HUBSPOT_API_KEY")
@@ -88,6 +85,9 @@ class Settings(BaseSettings):
             raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
 
 
-@lru_cache
+@lru_cache()
 def get_settings() -> Settings:
     return Settings()
+
+
+settings = get_settings()

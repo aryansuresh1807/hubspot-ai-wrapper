@@ -1,61 +1,53 @@
 """
-Security utilities: JWT validation, dependency injection for auth.
+Security utilities: JWT validation via Supabase, dependency injection for auth.
 """
 
-from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any, Dict
 
-from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-# Placeholder: set via config in production
-SECRET_KEY = "change-me-in-production-use-env"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60
+from app.services.supabase_service import SupabaseService, get_supabase_service
 
-security = HTTPBearer(auto_error=False)
-
-
-def create_access_token(data: dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
-    to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
-
-def decode_token(token: str) -> Optional[dict[str, Any]]:
-    try:
-        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    except JWTError:
-        return None
-
-
-async def get_current_user_optional(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
-) -> Optional[dict[str, Any]]:
-    """Dependency: optional auth. Returns payload if valid Bearer token, else None."""
-    if not credentials:
-        return None
-    payload = decode_token(credentials.credentials)
-    return payload
+security = HTTPBearer()
 
 
 async def get_current_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
-) -> dict[str, Any]:
-    """Dependency: require auth. Raises 401 if missing or invalid."""
-    if not credentials:
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    supabase: SupabaseService = Depends(get_supabase_service),
+) -> Dict[str, Any]:
+    """
+    Dependency to get current authenticated user.
+    Validates JWT token and returns user data.
+    """
+    token = credentials.credentials
+
+    try:
+        user = await supabase.verify_token(token)
+        return user
+    except HTTPException:
+        raise
+    except Exception:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
+            detail="Invalid authentication credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    payload = decode_token(credentials.credentials)
-    if not payload:
+
+
+async def get_current_user_id(
+    current_user: Dict[str, Any] = Depends(get_current_user),
+) -> str:
+    """Extract user ID from current user."""
+    user_id = (
+        current_user.get("id")
+        if isinstance(current_user, dict)
+        else getattr(current_user, "id", None)
+    )
+    if user_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
+            detail="Invalid user",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return payload
+    return str(user_id)

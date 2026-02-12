@@ -1,10 +1,81 @@
 -- HubSpot AI Wrapper - Initial Supabase schema
 -- Run in Supabase SQL Editor or via migration tool
--- Tables: sessions, ai_processing_logs, ai_generated_drafts, touch_date_recommendations, opportunities
--- Note: users are handled by Supabase Auth (auth.users)
 
 -- Enable UUID extension if not already
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- =====================================================
+-- AUTHENTICATION SCHEMA
+-- =====================================================
+
+-- User profiles table (extends Supabase auth.users)
+CREATE TABLE IF NOT EXISTS public.user_profiles (
+  id UUID REFERENCES auth.users(id) ON DELETE CASCADE PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  full_name TEXT,
+  company_name TEXT,
+  hubspot_portal_id TEXT,
+  hubspot_access_token TEXT,
+  hubspot_refresh_token TEXT,
+  hubspot_token_expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Enable Row Level Security
+ALTER TABLE public.user_profiles ENABLE ROW LEVEL SECURITY;
+
+-- RLS Policies
+CREATE POLICY "Users can view own profile"
+  ON public.user_profiles FOR SELECT
+  USING (auth.uid() = id);
+
+CREATE POLICY "Users can insert own profile"
+  ON public.user_profiles FOR INSERT
+  WITH CHECK (auth.uid() = id);
+
+CREATE POLICY "Users can update own profile"
+  ON public.user_profiles FOR UPDATE
+  USING (auth.uid() = id);
+
+-- Function to automatically create profile on signup
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.user_profiles (id, email, full_name)
+  VALUES (
+    NEW.id,
+    NEW.email,
+    COALESCE(NEW.raw_user_meta_data->>'full_name', '')
+  );
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Trigger to create profile automatically
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- Function to update updated_at timestamp
+CREATE OR REPLACE FUNCTION public.handle_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger for updated_at
+DROP TRIGGER IF EXISTS on_user_profile_updated ON public.user_profiles;
+CREATE TRIGGER on_user_profile_updated
+  BEFORE UPDATE ON public.user_profiles
+  FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+
+-- =====================================================
+-- EXISTING APPLICATION SCHEMA (keep everything below as is)
+-- =====================================================
 
 -- -----------------------------------------------------------------------------
 -- sessions: app-level session metadata (Supabase Auth handles auth sessions)
@@ -91,7 +162,6 @@ CREATE INDEX IF NOT EXISTS idx_ai_generated_drafts_activity_id ON public.ai_gene
 CREATE INDEX IF NOT EXISTS idx_ai_generated_drafts_created_at ON public.ai_generated_drafts(created_at);
 
 -- RLS: link to user via ai_processing_logs or allow service role; for simplicity allow authenticated read/write
--- If drafts are always created in context of a log, you can add user_id and policy. Here we allow authenticated.
 ALTER TABLE public.ai_generated_drafts ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Authenticated users can manage ai_generated_drafts"

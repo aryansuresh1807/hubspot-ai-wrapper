@@ -10,8 +10,9 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.core.config import get_settings
+from app.api.v1.endpoints import auth
 from app.api.v1.routes import api_router
+from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -31,18 +32,21 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS: allow Vercel frontend and local
+# CORS
 settings = get_settings()
-origins = list(settings.cors_origins_list)
-if settings.frontend_url and settings.frontend_url not in origins:
-    origins.append(settings.frontend_url.rstrip("/"))
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+# Auth routes
+app.include_router(
+    auth.router,
+    prefix="/api/v1/auth",
+    tags=["Authentication"],
 )
 
 
@@ -62,7 +66,18 @@ async def catch_exceptions(request: Request, call_next):
 # Root and health (outside versioning)
 @app.get("/")
 def root():
-    return {"service": "HubSpot AI Wrapper API", "status": "ok", "version": "1.0.0"}
+    return {
+        "message": "HubSpot AI Wrapper API",
+        "version": "1.0.0",
+        "docs": "/docs",
+        "endpoints": {
+            "auth": "/api/v1/auth",
+            "contacts": "/api/v1/contacts",
+            "activities": "/api/v1/activities",
+            "hubspot": "/api/v1/hubspot",
+            "llm": "/api/v1/llm",
+        },
+    }
 
 
 @app.get("/health")
