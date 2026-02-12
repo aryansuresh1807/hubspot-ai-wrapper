@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Sparkles, Loader2, X, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -943,10 +944,10 @@ function AccountTabContent(): React.ReactElement {
 }
 
 // ---------------------------------------------------------------------------
-// Page
+// Page content (uses useSearchParams — must be inside Suspense)
 // ---------------------------------------------------------------------------
 
-export default function ContactsPage(): React.ReactElement {
+function ContactsPageContent(): React.ReactElement {
   const router = useRouter();
   const searchParams = useSearchParams();
   const tabParam = searchParams.get('tab');
@@ -984,5 +985,25 @@ export default function ContactsPage(): React.ReactElement {
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Page (wraps content in Suspense for useSearchParams)
+// ---------------------------------------------------------------------------
+
+function ContactsPageFallback(): React.ReactElement {
+  return (
+    <div className="flex items-center justify-center min-h-[200px]" aria-busy="true">
+      <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-hidden />
+    </div>
+  );
+}
+
+export default function ContactsPage(): React.ReactElement {
+  return (
+    <Suspense fallback={<ContactsPageFallback />}>
+      <ContactsPageContent />
+    </Suspense>
   );
 }
