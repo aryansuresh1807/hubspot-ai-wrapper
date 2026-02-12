@@ -5,6 +5,11 @@ import type { LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
+export type EmptyStateAction = {
+  label: string;
+  onClick: () => void;
+};
+
 export interface EmptyStateProps {
   /** Lucide icon component (e.g. Inbox, Search, Filter) */
   icon: LucideIcon;
@@ -12,9 +17,17 @@ export interface EmptyStateProps {
   title: string;
   /** Optional supporting text */
   description?: string;
-  /** Optional action button: { label, onClick } or React node */
-  action?: React.ReactNode | { label: string; onClick: () => void };
+  /** Optional action button: EmptyStateAction or React node */
+  action?: React.ReactNode | EmptyStateAction;
   className?: string;
+}
+
+function isEmptyStateAction(
+  a: React.ReactNode | EmptyStateAction
+): a is EmptyStateAction {
+  return (
+    typeof a === 'object' && a !== null && 'label' in a && 'onClick' in a
+  );
 }
 
 /**
@@ -44,11 +57,11 @@ export function EmptyState({
       {description && (
         <p className="text-sm text-muted-foreground mt-1 max-w-sm">{description}</p>
       )}
-      {action && (
+      {action != null && (
         <div className="mt-4">
-          {typeof action === 'object' && action !== null && 'label' in action && 'onClick' in action ? (
-            <Button onClick={(action as { onClick: () => void }).onClick} size="sm">
-              {(action as { label: string }).label}
+          {isEmptyStateAction(action) ? (
+            <Button onClick={action.onClick} size="sm">
+              {action.label}
             </Button>
           ) : (
             action
