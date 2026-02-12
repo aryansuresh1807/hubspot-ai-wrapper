@@ -178,6 +178,7 @@ function DebouncedAutocomplete<T extends { id: string }>({
             <li
               key={opt.id}
               role="option"
+              aria-selected={false}
               className="cursor-pointer px-3 py-2 text-sm hover:bg-accent"
               onClick={() => {
                 onChange(getOptionLabel(opt));

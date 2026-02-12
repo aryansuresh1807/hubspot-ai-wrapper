@@ -195,7 +195,7 @@ function AutocompleteInput({
         : options.filter((o) =>
             getOptionLabel(o).toLowerCase().includes(value.toLowerCase())
           ),
-    [options, value]
+    [options, value, getOptionLabel]
   );
   React.useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -224,6 +224,7 @@ function AutocompleteInput({
             <li
               key={opt.id}
               role="option"
+              aria-selected={false}
               className="cursor-pointer px-3 py-2 text-sm hover:bg-accent"
               onClick={() => {
                 onChange(getOptionLabel(opt));
