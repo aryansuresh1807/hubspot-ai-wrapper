@@ -7,6 +7,7 @@ requests==2.31.0
 uvicorn[standard]==0.27.1
 pydantic==2.6.1
 pydantic-settings==2.1.0
+email-validator
 
 # Supabase
 supabase==2.3.4
