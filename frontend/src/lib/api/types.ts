@@ -127,8 +127,10 @@ export interface Contact {
   first_name?: string | null;
   last_name?: string | null;
   company_id?: string | null;
+  company_name?: string | null;
   hubspot_id?: string | null;
   phone?: string | null;
+  mobile_phone?: string | null;
   job_title?: string | null;
   relationship_status?: string | null;
   notes?: string | null;

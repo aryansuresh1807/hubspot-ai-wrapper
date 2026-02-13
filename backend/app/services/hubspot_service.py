@@ -546,6 +546,94 @@ class HubSpotService:
             raise HubSpotServiceError("Unexpected response when searching contacts")
         return data
 
+    def search_companies(
+        self,
+        query: str,
+        limit: int = 50,
+        after: str | None = None,
+        properties: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Search companies by name/domain/website/phone. Uses HubSpot default text search.
+        """
+        body: dict[str, Any] = {
+            "query": query,
+            "limit": min(limit, 100),
+        }
+        if after:
+            body["after"] = after
+        if properties:
+            body["properties"] = properties
+        try:
+            data = self._request(
+                "POST",
+                "/crm/v3/objects/companies/search",
+                json=body,
+            )
+        except HubSpotServiceError:
+            raise
+        except Exception as e:
+            raise HubSpotServiceError(f"Failed to search companies: {e!s}") from e
+        if not isinstance(data, dict):
+            raise HubSpotServiceError("Unexpected response when searching companies")
+        return data
+
+    def get_company_contact_ids(self, company_id: str) -> list[str]:
+        """
+        Get contact IDs associated with a company (v4 associations API).
+        """
+        try:
+            data = self._request(
+                "GET",
+                f"/crm/v4/objects/companies/{company_id}/associations/contacts",
+            )
+        except HubSpotServiceError:
+            raise
+        except Exception as e:
+            raise HubSpotServiceError(
+                f"Failed to get contacts for company {company_id}: {e!s}"
+            ) from e
+        if isinstance(data, dict) and "results" in data:
+            ids = []
+            for r in data["results"]:
+                if not isinstance(r, dict):
+                    continue
+                oid = r.get("toObjectId") or r.get("id")
+                if oid is not None:
+                    ids.append(str(oid))
+            return ids
+        if isinstance(data, list):
+            return [str(r.get("toObjectId") or r.get("id") or r) for r in data if isinstance(r, dict) and (r.get("toObjectId") or r.get("id"))]
+        return []
+
+    def get_contact_company_ids(self, contact_id: str) -> list[str]:
+        """
+        Get company IDs associated with a contact (v4 associations API).
+        """
+        try:
+            data = self._request(
+                "GET",
+                f"/crm/v4/objects/contacts/{contact_id}/associations/companies",
+            )
+        except HubSpotServiceError:
+            raise
+        except Exception as e:
+            raise HubSpotServiceError(
+                f"Failed to get companies for contact {contact_id}: {e!s}"
+            ) from e
+        if isinstance(data, dict) and "results" in data:
+            ids = []
+            for r in data["results"]:
+                if not isinstance(r, dict):
+                    continue
+                oid = r.get("toObjectId") or r.get("id")
+                if oid is not None:
+                    ids.append(str(oid))
+            return ids
+        if isinstance(data, list):
+            return [str(r.get("toObjectId") or r.get("id") or r) for r in data if isinstance(r, dict) and (r.get("toObjectId") or r.get("id"))]
+        return []
+
 
 def get_hubspot_service(access_token: str | None = None) -> HubSpotService:
     """Dependency: return a HubSpotService instance."""

@@ -4,7 +4,7 @@ import * as React from 'react';
 import { Suspense } from 'react';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { Loader2, X, Users, Search, Pencil, Trash2 } from 'lucide-react';
+import { Loader2, X, Users, Search, Pencil, Trash2, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -36,8 +36,8 @@ import {
 } from '@/components/ui/dialog';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  getContacts,
   createContact,
+  getContact,
   updateContact,
   deleteContact,
   searchContacts,
@@ -202,6 +202,11 @@ function ContactTabContent(): React.ReactElement {
   const [contactSubmitLoading, setContactSubmitLoading] = React.useState(false);
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
   const [editDialogOpen, setEditDialogOpen] = React.useState(false);
+  const [infoDialogOpen, setInfoDialogOpen] = React.useState(false);
+  const [selectedContact, setSelectedContact] = React.useState<ApiContact | null>(null);
+  const [contactDetails, setContactDetails] = React.useState<ApiContact | null>(null);
+  const [contactDetailsLoading, setContactDetailsLoading] = React.useState(false);
+  const [deleteConfirmContact, setDeleteConfirmContact] = React.useState<ApiContact | null>(null);
   const [toast, setToast] = React.useState<{
     open: boolean;
     variant: 'success' | 'error' | 'default';
@@ -218,9 +223,8 @@ function ContactTabContent(): React.ReactElement {
   const contactsQuery = useQuery({
     queryKey: [CONTACTS_QUERY_KEY, debouncedSearch],
     queryFn: async () => {
-      if (debouncedSearch) return searchContacts(debouncedSearch);
-      const res = await getContacts();
-      return res.contacts ?? [];
+      if (!debouncedSearch.trim()) return [];
+      return searchContacts(debouncedSearch);
     },
   });
 
@@ -269,9 +273,29 @@ function ContactTabContent(): React.ReactElement {
     setErrors({});
   };
 
-  const openEditDialog = async (c: ApiContact) => {
+  const openEditDialog = (c: ApiContact) => {
     loadContactIntoForm(c);
+    setInfoDialogOpen(false);
     setEditDialogOpen(true);
+  };
+
+  const openInfoDialog = (c: ApiContact) => {
+    setSelectedContact(c);
+    setContactDetails(null);
+    setDeleteConfirmContact(null);
+    setInfoDialogOpen(true);
+    setContactDetailsLoading(true);
+    getContact(c.id)
+      .then((full) => setContactDetails(full))
+      .catch(() => setContactDetails(c))
+      .finally(() => setContactDetailsLoading(false));
+  };
+
+  const closeInfoDialog = () => {
+    setInfoDialogOpen(false);
+    setSelectedContact(null);
+    setContactDetails(null);
+    setDeleteConfirmContact(null);
   };
 
   const closeEditDialog = () => {
@@ -347,6 +371,8 @@ function ContactTabContent(): React.ReactElement {
       showToast('success', 'Contact deleted');
       await refreshContactList();
       if (editingId === id) closeEditDialog();
+      setDeleteConfirmContact(null);
+      closeInfoDialog();
     } catch (err) {
       showToast('error', 'Failed to delete contact', err instanceof Error ? err.message : 'Try again.');
     } finally {
@@ -354,14 +380,20 @@ function ContactTabContent(): React.ReactElement {
     }
   };
 
+  const confirmDeleteContact = () => {
+    if (deleteConfirmContact) {
+      handleDelete(deleteConfirmContact.id);
+    }
+  };
+
   return (
     <div className="space-y-6">
-      {/* Search */}
+      {/* Single search bar: contact name, email, or company name */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" aria-hidden />
         <Input
           type="search"
-          placeholder="Search contacts by name or email..."
+          placeholder="Search by contact name, email, or company name..."
           value={searchInput}
           onChange={(e) => setSearchInput(e.target.value)}
           className="pl-9"
@@ -378,27 +410,27 @@ function ContactTabContent(): React.ReactElement {
         </p>
       )}
 
-      {isContactsLoading && contacts.length === 0 ? (
-        <div className="flex items-center justify-center py-12" aria-busy="true">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-hidden />
-        </div>
-      ) : contacts.length === 0 && !searchInput.trim() ? (
-        <Card className="border-dashed">
-          <CardContent className="p-0">
-            <EmptyState
-              icon={Users}
-              title="No contacts found. Add a contact to get started."
-              description="Create your first contact using the form below."
-              action={{ label: 'Add contact', onClick: () => {} }}
-            />
-          </CardContent>
-        </Card>
-      ) : contacts.length > 0 ? (
+      {debouncedSearch.trim() ? (
+        isContactsLoading && contacts.length === 0 ? (
+          <div className="flex items-center justify-center py-12" aria-busy="true">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-hidden />
+          </div>
+        ) : contacts.length === 0 ? (
+          <Card className="border-dashed">
+            <CardContent className="p-0">
+              <EmptyState
+                icon={Users}
+                title="No matches"
+                description="Try a different search or add a new contact below."
+              />
+            </CardContent>
+          </Card>
+        ) : (
         <Card className="flex flex-col min-h-0">
           <CardHeader className="shrink-0">
-            <CardTitle className="text-base">Contacts</CardTitle>
+            <CardTitle className="text-base">Results</CardTitle>
             <p className="text-xs text-muted-foreground mt-1">
-              Scroll to browse. Search by name or email above. Edit or delete from the list.
+              Click the info button to view details, edit, or delete.
             </p>
           </CardHeader>
           <CardContent className="p-0 flex flex-col min-h-0">
@@ -418,6 +450,9 @@ function ContactTabContent(): React.ReactElement {
                         {[c.first_name, c.last_name].filter(Boolean).join(' ') || 'Unnamed'}
                       </p>
                       <p className="text-sm text-muted-foreground truncate">{c.email ?? '—'}</p>
+                      {c.company_name && (
+                        <p className="text-xs text-muted-foreground truncate mt-0.5">{c.company_name}</p>
+                      )}
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <Button
@@ -425,26 +460,10 @@ function ContactTabContent(): React.ReactElement {
                         variant="ghost"
                         size="sm"
                         className="h-8 w-8 p-0"
-                        onClick={() => openEditDialog(c)}
-                        disabled={contactSubmitLoading}
-                        aria-label={`Edit ${c.first_name ?? ''} ${c.last_name ?? ''}`}
+                        onClick={() => openInfoDialog(c)}
+                        aria-label={`View details for ${c.first_name ?? ''} ${c.last_name ?? ''}`}
                       >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0 text-status-at-risk hover:text-status-at-risk"
-                        onClick={() => handleDelete(c.id)}
-                        disabled={deletingId !== null}
-                        aria-label={`Delete ${c.first_name ?? ''} ${c.last_name ?? ''}`}
-                      >
-                        {deletingId === c.id ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Trash2 className="h-4 w-4" />
-                        )}
+                        <Info className="h-4 w-4" />
                       </Button>
                     </div>
                   </li>
@@ -453,7 +472,128 @@ function ContactTabContent(): React.ReactElement {
             </div>
           </CardContent>
         </Card>
+        )
       ) : null}
+
+      {/* Info popup: contact details + Edit + Delete (with confirmation) */}
+      <Dialog open={infoDialogOpen} onOpenChange={(open) => !open && closeInfoDialog()}>
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto" showClose={true}>
+          <DialogHeader>
+            <DialogTitle>Contact details</DialogTitle>
+            <DialogDescription>
+              {selectedContact
+                ? [selectedContact.first_name, selectedContact.last_name].filter(Boolean).join(' ') || 'Unnamed'
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedContact && !deleteConfirmContact && (() => {
+            const display = contactDetails ?? selectedContact;
+            return (
+            <div className="space-y-4">
+              {contactDetailsLoading ? (
+                <div className="flex items-center justify-center py-8" aria-busy="true">
+                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-hidden />
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-3 text-sm">
+                  <div>
+                    <span className="text-muted-foreground">Name</span>
+                    <p className="font-medium">{[display.first_name, display.last_name].filter(Boolean).join(' ') || '—'}</p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Email</span>
+                    <p className="font-medium">{display.email ?? '—'}</p>
+                  </div>
+                  {(display.mobile_phone ?? display.phone) ? (
+                    <>
+                      {display.mobile_phone && (
+                        <div>
+                          <span className="text-muted-foreground">Mobile</span>
+                          <p className="font-medium">{display.mobile_phone}</p>
+                        </div>
+                      )}
+                      <div>
+                        <span className="text-muted-foreground">Phone</span>
+                        <p className="font-medium">{display.phone ?? '—'}</p>
+                      </div>
+                    </>
+                  ) : (
+                    <div>
+                      <span className="text-muted-foreground">Phone / Mobile</span>
+                      <p className="font-medium">—</p>
+                    </div>
+                  )}
+                  <div>
+                    <span className="text-muted-foreground">Company</span>
+                    <p className="font-medium">{display.company_name ?? display.company_id ?? '—'}</p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Job title</span>
+                    <p className="font-medium">{display.job_title ?? '—'}</p>
+                  </div>
+                  {display.relationship_status && (
+                    <div>
+                      <span className="text-muted-foreground">Relationship</span>
+                      <p className="font-medium">
+                        <StatusChip status={display.relationship_status as RelationshipStatus} size="sm" />
+                      </p>
+                    </div>
+                  )}
+                  {display.notes && (
+                    <div>
+                      <span className="text-muted-foreground">Notes</span>
+                      <p className="font-medium whitespace-pre-wrap">{display.notes}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+              {!contactDetailsLoading && (
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => selectedContact && openEditDialog(selectedContact)}>
+                    <Pencil className="h-4 w-4 mr-1" />
+                    Edit
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="text-status-at-risk hover:text-status-at-risk"
+                    onClick={() => setDeleteConfirmContact(selectedContact)}
+                  >
+                    <Trash2 className="h-4 w-4 mr-1" />
+                    Delete
+                  </Button>
+                </DialogFooter>
+              )}
+            </div>
+            );
+          })()}
+          {selectedContact && deleteConfirmContact && (
+            <div className="space-y-4">
+              <p className="text-sm">
+                Are you sure you want to delete{' '}
+                <strong>{[deleteConfirmContact.first_name, deleteConfirmContact.last_name].filter(Boolean).join(' ') || 'this contact'}</strong>?
+                This cannot be undone.
+              </p>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setDeleteConfirmContact(null)}>
+                  No, keep
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={confirmDeleteContact}
+                  disabled={deletingId !== null}
+                >
+                  {deletingId === deleteConfirmContact.id ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : null}
+                  Yes, delete
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Edit Contact Dialog */}
       <Dialog open={editDialogOpen} onOpenChange={(open) => !open && closeEditDialog()}>
