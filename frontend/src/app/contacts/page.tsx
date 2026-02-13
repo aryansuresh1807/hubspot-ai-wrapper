@@ -4,7 +4,7 @@ import * as React from 'react';
 import { Suspense } from 'react';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { Sparkles, Loader2, X, Users } from 'lucide-react';
+import { Loader2, X, Users, Search, Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -26,7 +26,14 @@ import {
   ToastDescription,
   ToastClose,
 } from '@/components/ui/toast';
-import { useContactStore } from '@/lib/store/contact-store';
+import {
+  getContacts,
+  createContact,
+  updateContact,
+  deleteContact,
+  searchContacts,
+  type Contact as ApiContact,
+} from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 // ---------------------------------------------------------------------------
@@ -54,20 +61,6 @@ const MOCK_CONTACTS = [
 
 const MOCK_INDUSTRIES = ['Technology', 'Healthcare', 'Finance', 'Retail', 'Manufacturing'];
 
-const MOCK_EMAILS = [
-  'jane.cooper@acme.com',
-  'robert.fox@globex.com',
-  'leslie@wayne.com',
-  'support@acme.com',
-  'sales@globex.com',
-];
-
-const MOCK_TEXT_SNIPPETS = [
-  'Met at conference. Interested in enterprise plan.',
-  'Follow-up call scheduled for next week.',
-  'Sent proposal. Awaiting feedback.',
-];
-
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_REGEX = /^[\d\s\-+.()]*$/;
 
@@ -93,24 +86,6 @@ function validateEmail(email: string): boolean {
 function validatePhone(phone: string): boolean {
   if (!phone.trim()) return true;
   return PHONE_REGEX.test(phone) && phone.replace(/\D/g, '').length >= 10;
-}
-
-// ---------------------------------------------------------------------------
-// Confidence badge
-// ---------------------------------------------------------------------------
-
-function ConfidenceBadge({ value }: { value: number }) {
-  const isLow = value < 70;
-  return (
-    <span
-      className={cn(
-        'text-xs font-medium px-1.5 py-0.5 rounded ml-1',
-        isLow ? 'bg-status-cooling/20 text-status-cooling' : 'bg-status-warm/20 text-status-warm'
-      )}
-    >
-      {value}%
-    </span>
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -199,24 +174,13 @@ function DebouncedAutocomplete<T extends { id: string }>({
 // Contact tab
 // ---------------------------------------------------------------------------
 
-interface ExtractedContact {
-  firstName?: string;
-  lastName?: string;
-  email?: string;
-  jobTitle?: string;
-  accountName?: string;
-  accountId?: string;
-  relationshipStatus?: RelationshipStatus;
-  followUpDate?: string;
-  notes?: string;
-  confidence?: Record<string, number>;
-}
-
 function ContactTabContent(): React.ReactElement {
-  const [emailQuery, setEmailQuery] = React.useState('');
-  const [textQuery, setTextQuery] = React.useState('');
-  const [extractEmailLoading, setExtractEmailLoading] = React.useState(false);
-  const [extractTextLoading, setExtractTextLoading] = React.useState(false);
+  const [contacts, setContacts] = React.useState<ApiContact[]>([]);
+  const [isContactsLoading, setIsContactsLoading] = React.useState(true);
+  const [contactError, setContactError] = React.useState<string | null>(null);
+  const [searchInput, setSearchInput] = React.useState('');
+  const [isSearching, setIsSearching] = React.useState(false);
+  const [editingId, setEditingId] = React.useState<string | null>(null);
   const [firstName, setFirstName] = React.useState('');
   const [lastName, setLastName] = React.useState('');
   const [email, setEmail] = React.useState('');
@@ -226,14 +190,9 @@ function ContactTabContent(): React.ReactElement {
   const [accountSearchDisplay, setAccountSearchDisplay] = React.useState('');
   const [relationshipStatus, setRelationshipStatus] = React.useState('');
   const [notes, setNotes] = React.useState('');
-  const [notesAiGenerated, setNotesAiGenerated] = React.useState(false);
   const [errors, setErrors] = React.useState<Record<string, string>>({});
-  const [suggestedJobTitle, setSuggestedJobTitle] = React.useState('');
-  const [suggestedAccount, setSuggestedAccount] = React.useState('');
-  const [suggestedStatus, setSuggestedStatus] = React.useState<RelationshipStatus | ''>('');
-  const [suggestedFollowUp, setSuggestedFollowUp] = React.useState('');
   const [contactSubmitLoading, setContactSubmitLoading] = React.useState(false);
-  const [extractConfidence, setExtractConfidence] = React.useState<Record<string, number>>({});
+  const [deletingId, setDeletingId] = React.useState<string | null>(null);
   const [toast, setToast] = React.useState<{
     open: boolean;
     variant: 'success' | 'error' | 'default';
@@ -245,83 +204,61 @@ function ContactTabContent(): React.ReactElement {
     setToast({ open: true, variant, title, description });
   };
 
-  const simulateExtractFromEmail = (): Promise<ExtractedContact> => {
-    return new Promise((resolve) => {
-      setTimeout(
-        () =>
-          resolve({
-            firstName: 'Jane',
-            lastName: 'Cooper',
-            email: 'jane.cooper@acme.com',
-            jobTitle: 'VP of Sales',
-            accountName: 'Acme Corp',
-            accountId: 'a1',
-            relationshipStatus: 'Active',
-            followUpDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-            confidence: {
-              firstName: 95,
-              lastName: 94,
-              email: 98,
-              jobTitle: 88,
-              account: 82,
-              relationshipStatus: 75,
-            },
-          }),
-        1500
-      );
-    });
-  };
-
-  const mockExtractFromEmail = async () => {
-    setExtractEmailLoading(true);
-    setErrors({});
+  const fetchContacts = React.useCallback(async (search?: string) => {
     try {
-      const result = await simulateExtractFromEmail();
-      setFirstName(result.firstName ?? '');
-      setLastName(result.lastName ?? '');
-      setEmail(result.email ?? '');
-      setJobTitle(result.jobTitle ?? '');
-      setAccountId(result.accountId ?? '');
-      setAccountSearchDisplay(result.accountName ?? '');
-      setRelationshipStatus(result.relationshipStatus ?? '');
-      setSuggestedJobTitle(result.jobTitle ?? '');
-      setSuggestedAccount(result.accountName ?? '');
-      setSuggestedStatus((result.relationshipStatus as RelationshipStatus) ?? '');
-      setSuggestedFollowUp(result.followUpDate ?? '');
-      setExtractConfidence(result.confidence ?? {});
-      setExtractEmailLoading(false);
-    } catch {
-      setExtractEmailLoading(false);
-      showToast('error', 'Extraction failed', 'Please try again.');
+      const res = await getContacts(search);
+      setContacts(res.contacts ?? []);
+      setContactError(null);
+    } catch (err) {
+      setContactError(err instanceof Error ? err.message : 'Failed to load contacts');
+      setContacts([]);
+      showToast('error', 'Failed to load contacts', err instanceof Error ? err.message : 'Try again.');
+    } finally {
+      setIsContactsLoading(false);
+      setIsSearching(false);
     }
-  };
+  }, []);
 
-  const simulateExtractFromText = (): Promise<{ notes: string }> => {
-    return new Promise((resolve) => {
-      setTimeout(
-        () =>
-          resolve({
-            notes: 'Met at conference. Interested in enterprise plan. Follow up next week.',
-          }),
-        1200
-      );
-    });
-  };
-
-  const mockExtractFromText = async () => {
-    setExtractTextLoading(true);
-    try {
-      const result = await simulateExtractFromText();
-      setNotes(result.notes);
-      setNotesAiGenerated(true);
-      setExtractTextLoading(false);
-    } catch {
-      setExtractTextLoading(false);
-      showToast('error', 'Extraction failed', 'Please try again.');
+  const refreshContactList = React.useCallback(async () => {
+    const q = searchInput.trim();
+    if (q) {
+      try {
+        const list = await searchContacts(q);
+        setContacts(list);
+        setContactError(null);
+      } catch {
+        await fetchContacts();
+      }
+    } else {
+      await fetchContacts();
     }
-  };
+  }, [searchInput, fetchContacts]);
+
+  React.useEffect(() => {
+    setIsContactsLoading(true);
+    fetchContacts();
+  }, [fetchContacts]);
+
+  const debouncedSearch = useDebouncedValue(searchInput.trim(), 400);
+  React.useEffect(() => {
+    if (!debouncedSearch) {
+      fetchContacts();
+      return;
+    }
+    setIsSearching(true);
+    searchContacts(debouncedSearch)
+      .then((list) => {
+        setContacts(list);
+        setContactError(null);
+      })
+      .catch((err) => {
+        showToast('error', 'Search failed', err instanceof Error ? err.message : 'Try again.');
+      })
+      .finally(() => setIsSearching(false));
+  }, [debouncedSearch, fetchContacts]);
 
   const resetContactForm = () => {
+    setEditingId(null);
     setFirstName('');
     setLastName('');
     setEmail('');
@@ -331,16 +268,24 @@ function ContactTabContent(): React.ReactElement {
     setAccountSearchDisplay('');
     setRelationshipStatus('');
     setNotes('');
-    setNotesAiGenerated(false);
     setErrors({});
-    setSuggestedJobTitle('');
-    setSuggestedAccount('');
-    setSuggestedStatus('');
-    setSuggestedFollowUp('');
-    setExtractConfidence({});
   };
 
-  const handleContactSubmit = async (e: React.FormEvent, linkToActivity: boolean, addAnother: boolean) => {
+  const loadContactIntoForm = (c: ApiContact) => {
+    setEditingId(c.id);
+    setFirstName(c.first_name ?? '');
+    setLastName(c.last_name ?? '');
+    setEmail(c.email ?? '');
+    setPhone('');
+    setJobTitle('');
+    setAccountId('');
+    setAccountSearchDisplay('');
+    setRelationshipStatus('');
+    setNotes('');
+    setErrors({});
+  };
+
+  const handleContactSubmit = async (e: React.FormEvent, _linkToActivity: boolean, addAnother: boolean) => {
     e.preventDefault();
     const next: Record<string, string> = {};
     if (!firstName.trim()) next.firstName = 'First name is required';
@@ -352,134 +297,164 @@ function ContactTabContent(): React.ReactElement {
     if (Object.keys(next).length > 0) return;
     setContactSubmitLoading(true);
     try {
-      await new Promise((r) => setTimeout(r, 800));
-      showToast(
-        'success',
-        'Contact created',
-        linkToActivity ? 'Contact created and linked to activity.' : undefined
-      );
+      if (editingId) {
+        await updateContact(editingId, {
+          first_name: firstName.trim(),
+          last_name: lastName.trim(),
+          email: email.trim(),
+          phone: phone.trim() || null,
+          job_title: jobTitle.trim() || null,
+          company_id: accountId || null,
+          relationship_status: relationshipStatus || null,
+          notes: notes.trim() || null,
+        });
+        showToast('success', 'Contact updated');
+      } else {
+        await createContact({
+          first_name: firstName.trim(),
+          last_name: lastName.trim(),
+          email: email.trim(),
+          phone: phone.trim() || null,
+          job_title: jobTitle.trim() || null,
+          company_id: accountId || null,
+          relationship_status: relationshipStatus || null,
+          notes: notes.trim() || null,
+        });
+        showToast('success', 'Contact created', addAnother ? 'Add another below.' : undefined);
+      }
+      await refreshContactList();
       resetContactForm();
-      if (!addAnother) {
-        setContactSubmitLoading(false);
-        return;
-      }
-    } catch {
-      showToast('error', 'Failed to create contact', 'Please try again.');
+      if (!addAnother && editingId) setEditingId(null);
+    } catch (err) {
+      showToast(
+        'error',
+        editingId ? 'Failed to update contact' : 'Failed to create contact',
+        err instanceof Error ? err.message : 'Please try again.'
+      );
+    } finally {
+      setContactSubmitLoading(false);
     }
-    setContactSubmitLoading(false);
   };
 
-  const applySuggestion = (field: 'jobTitle' | 'account' | 'status' | 'followUp', value: string) => {
-    if (field === 'jobTitle') setJobTitle(value);
-    if (field === 'account') {
-      const acc = MOCK_ACCOUNTS.find((a) => a.name === value);
-      if (acc) {
-        setAccountId(acc.id);
-        setAccountSearchDisplay(acc.name);
-      }
+  const handleDelete = async (id: string) => {
+    setDeletingId(id);
+    try {
+      await deleteContact(id);
+      showToast('success', 'Contact deleted');
+      await refreshContactList();
+      if (editingId === id) resetContactForm();
+    } catch (err) {
+      showToast('error', 'Failed to delete contact', err instanceof Error ? err.message : 'Try again.');
+    } finally {
+      setDeletingId(null);
     }
-    if (field === 'status') setRelationshipStatus(value);
-    if (field === 'followUp') setSuggestedFollowUp(value);
   };
-
-  const contacts = useContactStore((s) => s.contacts);
 
   return (
     <div className="space-y-6">
-      {contacts.length === 0 && (
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" aria-hidden />
+        <Input
+          type="search"
+          placeholder="Search contacts by name or email..."
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          className="pl-9"
+          aria-label="Search contacts"
+        />
+        {(isContactsLoading || isSearching) && (
+          <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" aria-hidden />
+        )}
+      </div>
+
+      {contactError && (
+        <p className="text-sm text-status-at-risk" role="alert">
+          {contactError}
+        </p>
+      )}
+
+      {isContactsLoading && contacts.length === 0 ? (
+        <div className="flex items-center justify-center py-12" aria-busy="true">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-hidden />
+        </div>
+      ) : contacts.length === 0 && !searchInput.trim() ? (
         <Card className="border-dashed">
           <CardContent className="p-0">
             <EmptyState
               icon={Users}
               title="No contacts found. Add a contact to get started."
-              description="Create your first contact using the form below or extract details from an email or text."
+              description="Create your first contact using the form below."
               action={{ label: 'Add contact', onClick: () => {} }}
             />
           </CardContent>
         </Card>
-      )}
-      {/* AI Extraction */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      ) : contacts.length > 0 ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Sparkles className="h-4 w-4" />
-              Extract from Email
-            </CardTitle>
+            <CardTitle className="text-base">Contacts</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2">
-            <DebouncedAutocomplete
-              value={emailQuery}
-              onChange={setEmailQuery}
-              placeholder="Search or paste email..."
-              options={MOCK_EMAILS.map((e, i) => ({ id: `email-${i}`, email: e }))}
-              getOptionLabel={(o) => (o as { email: string }).email}
-              onSelect={(o) => setEmailQuery((o as { email: string }).email)}
-              disabled={extractEmailLoading}
-            />
-            <Button
-              onClick={() => mockExtractFromEmail()}
-              disabled={extractEmailLoading}
-              className="w-full gap-2"
-            >
-              {extractEmailLoading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Sparkles className="h-4 w-4" />
-              )}
-              Extract Details
-            </Button>
+          <CardContent>
+            <ul className="divide-y divide-border">
+              {contacts.map((c) => (
+                <li
+                  key={c.id}
+                  className="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium truncate">
+                      {[c.first_name, c.last_name].filter(Boolean).join(' ') || 'Unnamed'}
+                    </p>
+                    <p className="text-sm text-muted-foreground truncate">{c.email ?? '—'}</p>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0"
+                      onClick={() => loadContactIntoForm(c)}
+                      disabled={contactSubmitLoading}
+                      aria-label={`Edit ${c.first_name ?? ''} ${c.last_name ?? ''}`}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0 text-status-at-risk hover:text-status-at-risk"
+                      onClick={() => handleDelete(c.id)}
+                      disabled={deletingId !== null}
+                      aria-label={`Delete ${c.first_name ?? ''} ${c.last_name ?? ''}`}
+                    >
+                      {deletingId === c.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+                </li>
+              ))}
+            </ul>
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Sparkles className="h-4 w-4" />
-              Extract from Text
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <DebouncedAutocomplete
-              value={textQuery}
-              onChange={setTextQuery}
-              placeholder="Search or paste text..."
-              options={MOCK_TEXT_SNIPPETS.map((t, i) => ({ id: `text-${i}`, text: t }))}
-              getOptionLabel={(o) => (o as { text: string }).text}
-              onSelect={(o) => setTextQuery((o as { text: string }).text)}
-              disabled={extractTextLoading}
-            />
-            <Button
-              onClick={() => mockExtractFromText()}
-              disabled={extractTextLoading}
-              className="w-full gap-2"
-            >
-              {extractTextLoading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Sparkles className="h-4 w-4" />
-              )}
-              Extract Details
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
+      ) : null}
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-6">
+      <div>
         {/* Contact Form */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Contact details</CardTitle>
+            <CardTitle className="text-base">
+              {editingId ? 'Edit contact' : 'Contact details'}
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <form onSubmit={(e) => { e.preventDefault(); }} className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor="firstName" className="inline-flex items-center">
-                    First Name *
-                    {extractConfidence.firstName != null && (
-                      <ConfidenceBadge value={extractConfidence.firstName} />
-                    )}
-                  </Label>
+                  <Label htmlFor="firstName">First Name *</Label>
                   <Input
                     id="firstName"
                     value={firstName}
@@ -492,12 +467,7 @@ function ContactTabContent(): React.ReactElement {
                   )}
                 </div>
                 <div>
-                  <Label htmlFor="lastName" className="inline-flex items-center">
-                    Last Name *
-                    {extractConfidence.lastName != null && (
-                      <ConfidenceBadge value={extractConfidence.lastName} />
-                    )}
-                  </Label>
+                  <Label htmlFor="lastName">Last Name *</Label>
                   <Input
                     id="lastName"
                     value={lastName}
@@ -511,12 +481,7 @@ function ContactTabContent(): React.ReactElement {
                 </div>
               </div>
               <div>
-                <Label htmlFor="email" className="inline-flex items-center">
-                  Email *
-                  {extractConfidence.email != null && (
-                    <ConfidenceBadge value={extractConfidence.email} />
-                  )}
-                </Label>
+                <Label htmlFor="email">Email *</Label>
                 <Input
                   id="email"
                   type="email"
@@ -543,12 +508,7 @@ function ContactTabContent(): React.ReactElement {
                 )}
               </div>
               <div>
-                <Label htmlFor="jobTitle" className="inline-flex items-center">
-                  Job Title
-                  {extractConfidence.jobTitle != null && (
-                    <ConfidenceBadge value={extractConfidence.jobTitle} />
-                  )}
-                </Label>
+                <Label htmlFor="jobTitle">Job Title</Label>
                 <Input
                   id="jobTitle"
                   value={jobTitle}
@@ -557,12 +517,7 @@ function ContactTabContent(): React.ReactElement {
                 />
               </div>
               <div>
-                <Label className="inline-flex items-center">
-                  Account
-                  {extractConfidence.account != null && (
-                    <ConfidenceBadge value={extractConfidence.account} />
-                  )}
-                </Label>
+                <Label>Account</Label>
                 <DebouncedAutocomplete
                   value={accountSearchDisplay || MOCK_ACCOUNTS.find((a) => a.id === accountId)?.name || ''}
                   onChange={(v) => {
@@ -581,12 +536,7 @@ function ContactTabContent(): React.ReactElement {
                 />
               </div>
               <div>
-                <Label className="inline-flex items-center">
-                  Relationship Status
-                  {extractConfidence.relationshipStatus != null && (
-                    <ConfidenceBadge value={extractConfidence.relationshipStatus} />
-                  )}
-                </Label>
+                <Label>Relationship Status</Label>
                 <Select value={relationshipStatus} onValueChange={setRelationshipStatus}>
                   <SelectTrigger className="mt-1">
                     <SelectValue placeholder="Select status" />
@@ -603,10 +553,7 @@ function ContactTabContent(): React.ReactElement {
                 </Select>
               </div>
               <div>
-                <Label htmlFor="notes" className="flex items-center gap-2">
-                  Notes
-                  {notesAiGenerated && <Sparkles className="h-4 w-4 text-status-active" />}
-                </Label>
+                <Label htmlFor="notes">Notes</Label>
                 <Textarea
                   id="notes"
                   value={notes}
@@ -616,78 +563,52 @@ function ContactTabContent(): React.ReactElement {
                 />
               </div>
               <div className="flex flex-wrap gap-2 pt-2">
-                <Button
-                  type="button"
-                  onClick={(e) => handleContactSubmit(e, true, false)}
-                  disabled={contactSubmitLoading}
-                >
-                  {contactSubmitLoading ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : null}
-                  Create Contact & Link to Activity
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={(e) => handleContactSubmit(e, false, false)}
-                  disabled={contactSubmitLoading}
-                >
-                  Create Contact
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={(e) => handleContactSubmit(e, false, true)}
-                  disabled={contactSubmitLoading}
-                >
-                  Create & Add Another
-                </Button>
+                {editingId ? (
+                  <>
+                    <Button
+                      type="button"
+                      onClick={(e) => handleContactSubmit(e, false, false)}
+                      disabled={contactSubmitLoading}
+                    >
+                      {contactSubmitLoading ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : null}
+                      Update Contact
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={resetContactForm}
+                      disabled={contactSubmitLoading}
+                    >
+                      Cancel
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={(e) => handleContactSubmit(e, false, false)}
+                      disabled={contactSubmitLoading}
+                    >
+                      {contactSubmitLoading ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : null}
+                      Create Contact
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={(e) => handleContactSubmit(e, false, true)}
+                      disabled={contactSubmitLoading}
+                    >
+                      Create & Add Another
+                    </Button>
+                  </>
+                )}
               </div>
             </form>
-          </CardContent>
-        </Card>
-
-        {/* AI Suggestions */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">AI Suggestions</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {suggestedJobTitle && (
-              <div className="flex items-center justify-between gap-2 rounded-md border border-border p-2">
-                <span className="text-sm truncate">{suggestedJobTitle}</span>
-                <Button size="sm" variant="outline" onClick={() => applySuggestion('jobTitle', suggestedJobTitle)}>
-                  Apply
-                </Button>
-              </div>
-            )}
-            {suggestedAccount && (
-              <div className="flex items-center justify-between gap-2 rounded-md border border-border p-2">
-                <span className="text-sm truncate">{suggestedAccount}</span>
-                <Button size="sm" variant="outline" onClick={() => applySuggestion('account', suggestedAccount)}>
-                  Apply
-                </Button>
-              </div>
-            )}
-            {suggestedStatus && (
-              <div className="flex items-center justify-between gap-2 rounded-md border border-border p-2">
-                <StatusChip status={suggestedStatus} size="sm" />
-                <Button size="sm" variant="outline" onClick={() => applySuggestion('status', suggestedStatus)}>
-                  Apply
-                </Button>
-              </div>
-            )}
-            {suggestedFollowUp && (
-              <div className="flex items-center justify-between gap-2 rounded-md border border-border p-2">
-                <span className="text-sm">{suggestedFollowUp}</span>
-                <Button size="sm" variant="outline" onClick={() => applySuggestion('followUp', suggestedFollowUp)}>
-                  Apply
-                </Button>
-              </div>
-            )}
-            {!suggestedJobTitle && !suggestedAccount && !suggestedStatus && !suggestedFollowUp && (
-              <p className="text-sm text-muted-foreground">Use &quot;Extract from Email&quot; or &quot;Extract from Text&quot; to see suggestions.</p>
-            )}
           </CardContent>
         </Card>
       </div>

@@ -1,0 +1,241 @@
+/**
+ * Activities API client.
+ * Uses NEXT_PUBLIC_API_URL and Supabase session (Bearer) for auth.
+ */
+
+import { createClient } from '@/lib/supabase/client';
+import { ApiClientError } from './client';
+import type {
+  ActivityListResponse,
+  ActivityQueryParams,
+  CreateActivityData,
+  DashboardActivity,
+  SyncResponse,
+  UpdateActivityData,
+} from './types';
+
+const getBaseUrl = (): string => {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+  if (!apiUrl) {
+    throw new Error(
+      'NEXT_PUBLIC_API_URL is not configured. Set it in your environment variables.'
+    );
+  }
+  return apiUrl.replace(/\/$/, '');
+};
+
+/**
+ * Fetches current Supabase session and returns headers with Bearer token.
+ * Use for authenticated API requests.
+ */
+export async function getAuthHeaders(): Promise<HeadersInit> {
+  const supabase = createClient();
+  const {
+    data: { session },
+    error,
+  } = await supabase.auth.getSession();
+  if (error) {
+    throw new Error(`Failed to get session: ${error.message}`);
+  }
+  if (!session?.access_token) {
+    throw new Error('Not authenticated. Please sign in.');
+  }
+  return {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${session.access_token}`,
+  };
+}
+
+function buildActivitiesQueryString(params: ActivityQueryParams): string {
+  const search = new URLSearchParams();
+  if (params.date != null) search.set('date', params.date);
+  if (params.date_from != null) search.set('date_from', params.date_from);
+  if (params.date_to != null) search.set('date_to', params.date_to);
+  if (params.sort != null) search.set('sort', params.sort);
+  if (params.relationship_status?.length) {
+    params.relationship_status.forEach((v) =>
+      search.append('relationship_status', v)
+    );
+  }
+  if (params.processing_status?.length) {
+    params.processing_status.forEach((v) =>
+      search.append('processing_status', v)
+    );
+  }
+  const qs = search.toString();
+  return qs ? `?${qs}` : '';
+}
+
+async function fetchApi<T>(
+  path: string,
+  init: RequestInit & { params?: Record<string, string | string[] | undefined> } = {}
+): Promise<T> {
+  const { params, ...requestInit } = init;
+  const base = getBaseUrl();
+  const url = new URL(path.startsWith('/') ? path : `/${path}`, base);
+  if (params) {
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === undefined) return;
+      if (Array.isArray(value)) value.forEach((v) => url.searchParams.append(key, v));
+      else url.searchParams.set(key, value);
+    });
+  }
+  const headers = await getAuthHeaders();
+  const res = await fetch(url.toString(), {
+    ...requestInit,
+    headers: { ...headers, ...requestInit.headers },
+  });
+  const text = await res.text();
+  let data: T | null = null;
+  if (text) {
+    try {
+      data = JSON.parse(text) as T;
+    } catch {
+      // non-JSON
+    }
+  }
+  if (!res.ok) {
+    const detail =
+      data && typeof data === 'object' && 'detail' in data
+        ? (data as { detail: string | Record<string, unknown> }).detail
+        : text;
+    throw new ApiClientError(
+      res.statusText || 'Request failed',
+      res.status,
+      typeof detail === 'string' ? detail : (detail as Record<string, unknown>)
+    );
+  }
+  return (data ?? {}) as T;
+}
+
+/**
+ * GET /api/v1/activities/
+ * List activities with optional filters and sort.
+ */
+export async function getActivities(
+  params: ActivityQueryParams = {}
+): Promise<ActivityListResponse> {
+  try {
+    const qs = buildActivitiesQueryString(params);
+    return fetchApi<ActivityListResponse>(`/api/v1/activities/${qs}`);
+  } catch (err) {
+    if (err instanceof ApiClientError) throw err;
+    throw new Error(
+      err instanceof Error ? err.message : 'Failed to fetch activities'
+    );
+  }
+}
+
+/**
+ * GET /api/v1/activities/{activityId}
+ * Fetch a single activity.
+ */
+export async function getActivity(
+  activityId: string
+): Promise<DashboardActivity> {
+  try {
+    return fetchApi<DashboardActivity>(`/api/v1/activities/${encodeURIComponent(activityId)}`);
+  } catch (err) {
+    if (err instanceof ApiClientError) throw err;
+    throw new Error(
+      err instanceof Error ? err.message : 'Failed to fetch activity'
+    );
+  }
+}
+
+/**
+ * POST /api/v1/activities/
+ * Create a new activity.
+ */
+export async function createActivity(
+  data: CreateActivityData
+): Promise<DashboardActivity> {
+  try {
+    return fetchApi<DashboardActivity>('/api/v1/activities/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  } catch (err) {
+    if (err instanceof ApiClientError) throw err;
+    throw new Error(
+      err instanceof Error ? err.message : 'Failed to create activity'
+    );
+  }
+}
+
+/**
+ * PUT /api/v1/activities/{activityId}
+ * Update an existing activity.
+ */
+export async function updateActivity(
+  activityId: string,
+  data: UpdateActivityData
+): Promise<DashboardActivity> {
+  try {
+    return fetchApi<DashboardActivity>(
+      `/api/v1/activities/${encodeURIComponent(activityId)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }
+    );
+  } catch (err) {
+    if (err instanceof ApiClientError) throw err;
+    throw new Error(
+      err instanceof Error ? err.message : 'Failed to update activity'
+    );
+  }
+}
+
+/**
+ * DELETE /api/v1/activities/{activityId}
+ * Delete an activity.
+ */
+export async function deleteActivity(activityId: string): Promise<void> {
+  try {
+    await fetchApi<unknown>(
+      `/api/v1/activities/${encodeURIComponent(activityId)}`,
+      { method: 'DELETE' }
+    );
+  } catch (err) {
+    if (err instanceof ApiClientError) throw err;
+    throw new Error(
+      err instanceof Error ? err.message : 'Failed to delete activity'
+    );
+  }
+}
+
+/**
+ * POST /api/v1/activities/{activityId}/complete
+ * Mark an activity as complete.
+ */
+export async function completeActivity(activityId: string): Promise<void> {
+  try {
+    await fetchApi<unknown>(
+      `/api/v1/activities/${encodeURIComponent(activityId)}/complete`,
+      { method: 'POST' }
+    );
+  } catch (err) {
+    if (err instanceof ApiClientError) throw err;
+    throw new Error(
+      err instanceof Error ? err.message : 'Failed to complete activity'
+    );
+  }
+}
+
+/**
+ * POST /api/v1/activities/sync
+ * Force sync activities from HubSpot.
+ */
+export async function syncActivities(): Promise<SyncResponse> {
+  try {
+    return fetchApi<SyncResponse>('/api/v1/activities/sync', {
+      method: 'POST',
+    });
+  } catch (err) {
+    if (err instanceof ApiClientError) throw err;
+    throw new Error(
+      err instanceof Error ? err.message : 'Failed to sync activities'
+    );
+  }
+}
