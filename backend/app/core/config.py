@@ -35,7 +35,11 @@ class Settings(BaseSettings):
     # HubSpot
     hubspot_api_key: str = Field(
         default="",
-        description="HubSpot Private App access token or OAuth access token",
+        description="HubSpot Private App access token (legacy)",
+    )
+    hubspot_access_token: str = Field(
+        default="",
+        description="HubSpot OAuth or Private App access token (Bearer auth)",
     )
 
     # LLM (at least one required for AI features)
@@ -77,8 +81,8 @@ class Settings(BaseSettings):
             missing.append("SUPABASE_ANON_KEY")
         if not self.SUPABASE_SERVICE_KEY:
             missing.append("SUPABASE_SERVICE_KEY")
-        if not self.hubspot_api_key:
-            missing.append("HUBSPOT_API_KEY")
+        if not self.hubspot_api_key and not self.hubspot_access_token:
+            missing.append("HUBSPOT_ACCESS_TOKEN or HUBSPOT_API_KEY")
         if not self.openai_api_key and not self.anthropic_api_key:
             missing.append("OPENAI_API_KEY or ANTHROPIC_API_KEY")
         if missing:

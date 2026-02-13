@@ -74,6 +74,7 @@ def root():
             "auth": "/api/v1/auth",
             "contacts": "/api/v1/contacts",
             "activities": "/api/v1/activities",
+            "dashboard": "/api/v1/dashboard",
             "hubspot": "/api/v1/hubspot",
             "llm": "/api/v1/llm",
         },
