@@ -5,16 +5,47 @@ CORS, API versioning (/api/v1), health check, error handling.
 
 import logging
 from contextlib import asynccontextmanager
+from typing import Callable
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
 
 from app.api.v1.endpoints import auth
 from app.api.v1.routes import api_router
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+# Load settings once at import so CORS list is available to middleware
+_settings = get_settings()
+
+
+class PreflightCorsMiddleware(BaseHTTPMiddleware):
+    """
+    Respond to OPTIONS (preflight) immediately with 200 and CORS headers.
+    Some proxies (e.g. Railway) can 502 on OPTIONS if the app doesn't respond fast enough;
+    this ensures preflight is handled before any other middleware or routing.
+    """
+
+    async def dispatch(self, request: StarletteRequest, call_next: Callable) -> Response:
+        if request.method != "OPTIONS":
+            return await call_next(request)
+        origin = request.headers.get("origin", "").strip()
+        allowed = _settings.cors_origins_list
+        allow_origin = origin if origin in allowed else (allowed[0] if allowed else "*")
+        return Response(
+            status_code=200,
+            headers={
+                "Access-Control-Allow-Origin": allow_origin,
+                "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+                "Access-Control-Allow-Headers": "*",
+                "Access-Control-Allow-Credentials": "true",
+                "Access-Control-Max-Age": "86400",
+            },
+        )
 
 
 @asynccontextmanager
@@ -32,14 +63,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS
-settings = get_settings()
+# CORS: preflight first (runs first), then general CORS for all responses
+app.add_middleware(PreflightCorsMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
+    allow_origins=_settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Auth routes
