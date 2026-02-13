@@ -509,6 +509,34 @@ class HubSpotService:
         except Exception as e:
             raise HubSpotServiceError(f"Failed to delete task {task_id}: {e!s}") from e
 
+    def associate_task_with_contact(self, task_id: str, contact_id: str) -> None:
+        """Create default association between task and contact (v4 API; object types are singular)."""
+        try:
+            self._request(
+                "PUT",
+                f"/crm/v4/objects/task/{task_id}/associations/default/contact/{contact_id}",
+            )
+        except HubSpotServiceError:
+            raise
+        except Exception as e:
+            raise HubSpotServiceError(
+                f"Failed to associate task {task_id} with contact {contact_id}: {e!s}"
+            ) from e
+
+    def associate_task_with_company(self, task_id: str, company_id: str) -> None:
+        """Create default association between task and company (v4 API; object types are singular)."""
+        try:
+            self._request(
+                "PUT",
+                f"/crm/v4/objects/task/{task_id}/associations/default/company/{company_id}",
+            )
+        except HubSpotServiceError:
+            raise
+        except Exception as e:
+            raise HubSpotServiceError(
+                f"Failed to associate task {task_id} with company {company_id}: {e!s}"
+            ) from e
+
     # -------------------------------------------------------------------------
     # Search
     # -------------------------------------------------------------------------

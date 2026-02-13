@@ -89,3 +89,72 @@ class SyncStatusResponse(BaseModel):
     synced: bool
     message: str
     tasks_count: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Activity page: process notes (LLM) and submit
+# ---------------------------------------------------------------------------
+
+class ProcessNotesRequest(BaseModel):
+    """Request body for POST /activities/{id}/process-notes."""
+    note_text: str = ""
+
+
+class RecognisedDateOut(BaseModel):
+    date: str | None = None  # YYYY-MM-DD
+    label: str | None = None
+    confidence: int = 0
+
+
+class RecommendedTouchDateOut(BaseModel):
+    date: str  # YYYY-MM-DD
+    label: str = ""
+    rationale: str = ""
+
+
+class ExtractedMetadataOut(BaseModel):
+    subject: str = ""
+    next_steps: str = ""
+    questions_raised: str = ""
+    urgency: Literal["low", "medium", "high"] = "medium"
+    subject_confidence: int = 0
+    next_steps_confidence: int = 0
+    questions_confidence: int = 0
+
+
+class DraftOut(BaseModel):
+    text: str
+    confidence: int = 0
+
+
+class ProcessNotesResponse(BaseModel):
+    """Response from process-notes: summary, dates, metadata, drafts."""
+    summary: str = ""
+    recognised_date: RecognisedDateOut = RecognisedDateOut()
+    recommended_touch_date: RecommendedTouchDateOut | None = None
+    metadata: ExtractedMetadataOut = ExtractedMetadataOut()
+    drafts: dict[str, DraftOut] = {}  # keys: original, formal, concise, warm, detailed
+
+
+class ActivitySubmitRequest(BaseModel):
+    """Request body for POST /activities/{id}/submit and POST /activities/create-and-submit."""
+    mark_complete: bool = False
+    meeting_notes: str | None = None  # selected draft text to prepend to task body
+    activity_date: str | None = None  # YYYY-MM-DD; date the task was performed (used for note prefix)
+    due_date: str | None = None  # YYYY-MM-DD; task due date in HubSpot
+    subject: str | None = None  # task title
+    contact_id: str | None = None
+    company_id: str | None = None
+
+
+class CreateAndSubmitResponse(BaseModel):
+    """Response for POST /activities/create-and-submit (new activity)."""
+    message: str
+    id: str  # new task id
+
+
+class RegenerateDraftRequest(BaseModel):
+    """Request body for POST /activities/{id}/regenerate-draft."""
+    tone: str  # original, formal, concise, warm, detailed
+    current_note: str = ""
+    previous_notes: str = ""

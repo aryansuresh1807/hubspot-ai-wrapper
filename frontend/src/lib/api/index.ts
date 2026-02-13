@@ -14,6 +14,10 @@ export {
   deleteActivity,
   completeActivity,
   syncActivities,
+  processActivityNotes,
+  createAndSubmitActivity,
+  submitActivity,
+  regenerateActivityDraft,
   getAuthHeaders,
 } from './activities';
 
@@ -31,6 +35,7 @@ export {
   updateContact,
   deleteContact,
   searchContacts,
+  getContactsByCompany,
 } from './contacts';
 
 export {
@@ -56,4 +61,12 @@ export type {
   ContactListResponse,
   ContactCreate,
   ContactUpdate,
+  ProcessNotesRequest,
+  ProcessNotesResponse,
+  ActivitySubmitRequest,
+  RegenerateDraftRequest,
+  DraftOut,
+  RecognisedDateOut,
+  RecommendedTouchDateOut,
+  ExtractedMetadataOut,
 } from './types';

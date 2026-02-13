@@ -8,8 +8,12 @@ import { ApiClientError } from './client';
 import type {
   ActivityListResponse,
   ActivityQueryParams,
+  ActivitySubmitRequest,
   CreateActivityData,
   DashboardActivity,
+  ProcessNotesRequest,
+  ProcessNotesResponse,
+  RegenerateDraftRequest,
   SyncResponse,
   UpdateActivityData,
 } from './types';
@@ -243,6 +247,101 @@ export async function syncActivities(): Promise<SyncResponse> {
     if (err instanceof ApiClientError) throw err;
     throw new Error(
       err instanceof Error ? err.message : 'Failed to sync activities'
+    );
+  }
+}
+
+/**
+ * POST /api/v1/activities/{activityId}/process-notes
+ * Run LLM processing on notes; returns summary, recognised date, recommended date, metadata, drafts.
+ */
+export async function processActivityNotes(
+  activityId: string,
+  data: ProcessNotesRequest
+): Promise<ProcessNotesResponse> {
+  try {
+    return fetchApi<ProcessNotesResponse>(
+      `/api/v1/activities/${encodeURIComponent(activityId)}/process-notes`,
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }
+    );
+  } catch (err) {
+    if (err instanceof ApiClientError) throw err;
+    throw new Error(
+      err instanceof Error ? err.message : 'Failed to process notes'
+    );
+  }
+}
+
+/**
+ * POST /api/v1/activities/create-and-submit
+ * Create a new task in HubSpot with meeting notes, subject, contact, and account.
+ */
+export async function createAndSubmitActivity(
+  data: Omit<ActivitySubmitRequest, 'mark_complete'>
+): Promise<{ message: string; id: string }> {
+  try {
+    return fetchApi<{ message: string; id: string }>(
+      '/api/v1/activities/create-and-submit',
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }
+    );
+  } catch (err) {
+    if (err instanceof ApiClientError) throw err;
+    throw new Error(
+      err instanceof Error ? err.message : 'Failed to create activity'
+    );
+  }
+}
+
+/**
+ * POST /api/v1/activities/{activityId}/submit
+ * Mark activity complete or update with meeting notes, due date, subject.
+ */
+export async function submitActivity(
+  activityId: string,
+  data: ActivitySubmitRequest
+): Promise<{ message: string }> {
+  try {
+    return fetchApi<{ message: string }>(
+      `/api/v1/activities/${encodeURIComponent(activityId)}/submit`,
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }
+    );
+  } catch (err) {
+    if (err instanceof ApiClientError) throw err;
+    throw new Error(
+      err instanceof Error ? err.message : 'Failed to submit activity'
+    );
+  }
+}
+
+/**
+ * POST /api/v1/activities/{activityId}/regenerate-draft
+ * Regenerate a single draft tone (e.g. formal, concise).
+ */
+export async function regenerateActivityDraft(
+  activityId: string,
+  data: RegenerateDraftRequest
+): Promise<{ text: string; confidence: number }> {
+  try {
+    return fetchApi<{ text: string; confidence: number }>(
+      `/api/v1/activities/${encodeURIComponent(activityId)}/regenerate-draft`,
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }
+    );
+  } catch (err) {
+    if (err instanceof ApiClientError) throw err;
+    throw new Error(
+      err instanceof Error ? err.message : 'Failed to regenerate draft'
     );
   }
 }

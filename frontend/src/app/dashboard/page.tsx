@@ -15,6 +15,7 @@ import {
   Clock,
   WifiOff,
   AlertTriangle,
+  FileText,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -67,6 +68,7 @@ import {
 } from '@/lib/api';
 import {
   getDashboardState,
+  updateDashboardState,
   debouncedUpdateDashboardState,
   DebounceCancelledError,
 } from '@/lib/api/dashboard';
@@ -89,6 +91,10 @@ export interface DashboardActivityItem {
   activity: ActivityCardActivity;
   communicationSummary: CommunicationSummary;
   contact: ContactPreviewContact;
+  /** First contact id (for Activity page pre-fill) */
+  contactId?: string;
+  /** First company id (for Activity page pre-fill) */
+  companyId?: string;
 }
 
 export type SortOption =
@@ -189,7 +195,15 @@ function apiActivityToDashboardItem(api: DashboardActivity): DashboardActivityIt
     companyName: contact?.company_name ?? undefined,
     recentNotes: [],
   };
-  return { activity, communicationSummary, contact: contactPreview };
+  const contactId = api.contact_ids?.[0] ?? contact?.id;
+  const companyId = api.company_ids?.[0] ?? company?.id;
+  return {
+    activity,
+    communicationSummary,
+    contact: contactPreview,
+    contactId: contactId ?? undefined,
+    companyId: companyId ?? undefined,
+  };
 }
 
 /** Serialize local FilterState to API filter_state */
@@ -215,6 +229,43 @@ function filterStateFromApi(state: Record<string, unknown> | undefined): FilterS
     dateFrom: typeof state.dateFrom === 'string' ? state.dateFrom : '',
     dateTo: typeof state.dateTo === 'string' ? state.dateTo : '',
   };
+}
+
+/** Persist dashboard state to sessionStorage so it survives navigation within the session */
+function saveDashboardStateToStorage(state: {
+  selected_activity_id: string | null;
+  sort_option: SortOption;
+  filter_state: Record<string, unknown>;
+  date_picker_value: string | null;
+}): void {
+  try {
+    sessionStorage.setItem(DASHBOARD_STATE_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // ignore
+  }
+}
+
+/** Read dashboard state from sessionStorage; returns null if missing or invalid */
+function loadDashboardStateFromStorage(): {
+  filter: FilterState;
+  sort: SortOption;
+  datePickerValue: string;
+  selectedActivityId: string | null;
+} | null {
+  try {
+    const raw = sessionStorage.getItem(DASHBOARD_STATE_STORAGE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw) as Record<string, unknown>;
+    const filter = filterStateFromApi(data.filter_state as Record<string, unknown>);
+    const sort = (data.sort_option as SortOption) || 'date_newest';
+    const datePickerValue =
+      typeof data.date_picker_value === 'string' ? data.date_picker_value : getTodayDateString();
+    const selectedActivityId =
+      typeof data.selected_activity_id === 'string' ? data.selected_activity_id : null;
+    return { filter, sort, datePickerValue, selectedActivityId };
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -397,17 +448,36 @@ function ContactPreviewSkeleton() {
 
 const ACTIVITIES_QUERY_KEY = 'activities';
 const DASHBOARD_STATE_QUERY_KEY = 'dashboardState';
+const DASHBOARD_STATE_STORAGE_KEY = 'dashboardState';
+
+function getInitialDashboardStateFromStorage(): {
+  filter: FilterState;
+  sort: SortOption;
+  datePickerValue: string;
+  selectedActivityId: string | null;
+} | null {
+  return loadDashboardStateFromStorage();
+}
 
 export default function DashboardPage(): React.ReactElement {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { user } = useAuth() as { user: unknown };
-  const [selectedActivityId, setSelectedActivityId] = React.useState<string | null>(null);
-  const [sort, setSort] = React.useState<SortOption>('date_newest');
+  const stored = React.useMemo(() => getInitialDashboardStateFromStorage(), []);
+  const [selectedActivityId, setSelectedActivityId] = React.useState<string | null>(
+    () => stored?.selectedActivityId ?? null
+  );
+  const [sort, setSort] = React.useState<SortOption>(() => stored?.sort ?? 'date_newest');
   const [filterDialogOpen, setFilterDialogOpen] = React.useState(false);
-  const [filterDraft, setFilterDraft] = React.useState<FilterState>(DEFAULT_FILTER);
-  const [filterApplied, setFilterApplied] = React.useState<FilterState>(DEFAULT_FILTER);
-  const [datePickerValue, setDatePickerValue] = React.useState<string>(getTodayDateString);
+  const [filterDraft, setFilterDraft] = React.useState<FilterState>(
+    () => stored?.filter ?? DEFAULT_FILTER
+  );
+  const [filterApplied, setFilterApplied] = React.useState<FilterState>(
+    () => stored?.filter ?? DEFAULT_FILTER
+  );
+  const [datePickerValue, setDatePickerValue] = React.useState<string>(
+    () => stored?.datePickerValue ?? getTodayDateString()
+  );
   const [completingId, setCompletingId] = React.useState<string | null>(null);
   const [isSyncing, setIsSyncing] = React.useState(false);
   const [lastSyncedAt, setLastSyncedAt] = React.useState<number | null>(null);
@@ -418,7 +488,20 @@ export default function DashboardPage(): React.ReactElement {
     title: '',
     description: undefined,
   });
-  const hasSyncedStateFromServer = React.useRef(false);
+  // Ref holding latest state so we can persist on unmount (flush before navigate away)
+  const latestStateRef = React.useRef({
+    selectedActivityId,
+    sort,
+    filterApplied,
+    datePickerValue,
+  });
+  latestStateRef.current = {
+    selectedActivityId,
+    sort,
+    filterApplied,
+    datePickerValue,
+  };
+  const loadedFromStorageRef = React.useRef(false);
 
   const showToast = React.useCallback(
     (variant: ToastState['variant'], title: string, description?: string) => {
@@ -435,11 +518,17 @@ export default function DashboardPage(): React.ReactElement {
     retry: false,
   });
 
-  // Sync local UI state from server/cache once when dashboard state is available
+  // On mount: mark that we restored from sessionStorage (state already initialized from it) so API sync doesn't overwrite
+  React.useEffect(() => {
+    const stored = loadDashboardStateFromStorage();
+    if (stored) loadedFromStorageRef.current = true;
+  }, []);
+
+  // Sync local UI state from server/cache when dashboard state is available (only if we didn't load from sessionStorage)
   React.useEffect(() => {
     const state = dashboardStateQuery.data;
-    if (!state || hasSyncedStateFromServer.current) return;
-    hasSyncedStateFromServer.current = true;
+    if (!state || loadedFromStorageRef.current) return;
+    loadedFromStorageRef.current = true;
     setSort((state.sort_option as SortOption) || 'date_newest');
     const filter = filterStateFromApi(state.filter_state as Record<string, unknown>);
     setFilterApplied(filter);
@@ -447,6 +536,25 @@ export default function DashboardPage(): React.ReactElement {
     setDatePickerValue(state.date_picker_value ?? getTodayDateString());
     if (state.selected_activity_id) setSelectedActivityId(state.selected_activity_id);
   }, [dashboardStateQuery.data]);
+
+  // On unmount: persist current state immediately so server has it for other tabs/device
+  React.useEffect(() => {
+    return () => {
+      if (!user) return;
+      const s = latestStateRef.current;
+      const state = {
+        selected_activity_id: s.selectedActivityId ?? null,
+        sort_option: s.sort,
+        filter_state: filterStateToApi(s.filterApplied),
+        date_picker_value: s.datePickerValue || null,
+      };
+      updateDashboardState(state)
+        .then((result) => {
+          queryClient.setQueryData([DASHBOARD_STATE_QUERY_KEY], result);
+        })
+        .catch(() => {});
+    };
+  }, [user, queryClient]);
 
   // Activities from API (cached by React Query – instant when navigating back)
   const activitiesParams = React.useMemo(
@@ -511,20 +619,25 @@ export default function DashboardPage(): React.ReactElement {
     }
   }, [dashboardStateQuery.isError, dashboardStateQuery.error, dashboardStateQuery.data, showToast]);
 
-  // Persist dashboard state (debounced) when selection, sort, filter, or date changes
+  // Persist dashboard state: always write to sessionStorage (so date/filters survive navigation), debounce API save.
   React.useEffect(() => {
-    if (!user || isInitialLoad) return;
     const state = {
       selected_activity_id: selectedActivityId ?? null,
       sort_option: sort,
       filter_state: filterStateToApi(filterApplied),
       date_picker_value: datePickerValue || null,
     };
-    debouncedUpdateDashboardState(state).catch((err) => {
-      if (err instanceof DebounceCancelledError) return;
-      showToast('error', 'Failed to save dashboard state', err instanceof Error ? err.message : undefined);
-    });
-  }, [user, isInitialLoad, selectedActivityId, sort, filterApplied, datePickerValue, showToast]);
+    saveDashboardStateToStorage(state);
+    if (!user || isInitialLoad) return;
+    debouncedUpdateDashboardState(state)
+      .then((result) => {
+        queryClient.setQueryData([DASHBOARD_STATE_QUERY_KEY], result);
+      })
+      .catch((err) => {
+        if (err instanceof DebounceCancelledError) return;
+        showToast('error', 'Failed to save dashboard state', err instanceof Error ? err.message : undefined);
+      });
+  }, [user, isInitialLoad, selectedActivityId, sort, filterApplied, datePickerValue, showToast, queryClient]);
 
   const selectedItem = React.useMemo(
     () => activities.find((item) => item.activity.id === selectedActivityId) ?? null,
@@ -585,9 +698,16 @@ export default function DashboardPage(): React.ReactElement {
 
   const handleOpen = React.useCallback(
     (activity: ActivityCardActivity) => {
-      router.push(`/activity?id=${activity.id}`);
+      const item = activities.find((i) => i.activity.id === activity.id);
+      const params = new URLSearchParams();
+      params.set('id', activity.id);
+      if (item?.contactId) params.set('contact_id', item.contactId);
+      if (item?.companyId) params.set('company_id', item.companyId);
+      if (item?.activity.contactName) params.set('contact_name', item.activity.contactName);
+      if (item?.activity.accountName) params.set('account_name', item.activity.accountName);
+      router.push(`/activity?${params.toString()}`);
     },
-    [router]
+    [router, activities]
   );
 
   const handleComplete = React.useCallback(
@@ -904,19 +1024,21 @@ export default function DashboardPage(): React.ReactElement {
           </div>
         </section>
 
-        {/* Middle panel - Communication history (task notes) */}
+        {/* Middle panel - Client notes (task notes) */}
         <section className="flex flex-col min-h-0 lg:col-span-3 lg:flex-shrink-0 lg:overflow-hidden">
           <Card className="h-full min-h-0 overflow-hidden flex flex-col">
             <CardHeader className="pb-2 shrink-0">
-              <h2 className="text-lg font-semibold">Communication Summary</h2>
+              <h2 className="text-lg font-semibold flex items-center gap-2">
+                <FileText className="h-4 w-4 text-muted-foreground" />
+                Client notes
+              </h2>
             </CardHeader>
             <CardContent className="flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto">
               {isLoading ? (
                 <CommunicationSummarySkeleton />
               ) : selectedItem ? (
-                <div>
-                  <h3 className="text-sm font-medium mb-2">Communication history</h3>
-                  <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                <div className="rounded-md border border-border bg-muted/30 p-3 min-h-0 overflow-y-auto">
+                  <p className="text-sm text-foreground whitespace-pre-wrap">
                     {selectedItem.activity.noteExcerpt
                       ? stripHtml(selectedItem.activity.noteExcerpt)
                       : 'No notes saved for this task.'}
@@ -924,7 +1046,7 @@ export default function DashboardPage(): React.ReactElement {
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  Select an activity to see the communication history.
+                  Select an activity to see client notes.
                 </p>
               )}
             </CardContent>
@@ -968,3 +1090,4 @@ export default function DashboardPage(): React.ReactElement {
     </ProtectedRoute>
   );
 }
+

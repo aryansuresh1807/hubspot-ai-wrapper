@@ -315,6 +315,17 @@ class SupabaseService:
             logger.error("Delete task cache error: %s", str(e))
             return False
 
+    async def delete_tasks_cache_for_user(self, user_id: str) -> None:
+        """Remove all cached tasks for this user. Use after syncing from HubSpot so cache matches HubSpot exactly."""
+        try:
+            self.client.table("hubspot_tasks_cache").delete().eq("user_id", user_id).execute()
+        except Exception as e:
+            logger.error("Delete all tasks cache for user error: %s", str(e))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to clear tasks cache",
+            )
+
     # -------------------------------------------------------------------------
     # HubSpot contacts cache (hubspot_contacts_cache table)
     # -------------------------------------------------------------------------

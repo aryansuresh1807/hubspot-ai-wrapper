@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import {
   Sparkles,
@@ -54,6 +55,30 @@ import { Skeleton } from '@/components/shared/skeleton';
 import { StatusChip } from '@/components/crm/StatusChip';
 import { OpportunityIndicator } from '@/components/crm/OpportunityIndicator';
 import { cn } from '@/lib/utils';
+import {
+  getActivity,
+  processActivityNotes,
+  createAndSubmitActivity,
+  submitActivity,
+  regenerateActivityDraft,
+  getContactsByCompany,
+  searchContacts,
+  searchCompanies,
+  completeActivity,
+} from '@/lib/api';
+import type { Contact } from '@/lib/api/types';
+import type { CompanySearchResult } from '@/lib/api/companies';
+
+const DEBOUNCE_MS = 300;
+
+function useDebouncedValue<T>(value: T, delay: number): T {
+  const [debounced, setDebounced] = React.useState(value);
+  React.useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return debounced;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -61,7 +86,7 @@ import { cn } from '@/lib/utils';
 
 type ProcessingStep = 'idle' | 'sent' | 'extracting' | 'ready';
 type UrgencyLevel = 'low' | 'medium' | 'high';
-type DraftTone = 'original' | 'formal' | 'concise' | 'warm';
+type DraftTone = 'original' | 'formal' | 'concise' | 'warm' | 'detailed';
 
 interface RecommendedTouchDate {
   id: string;
@@ -73,18 +98,6 @@ interface RecommendedTouchDate {
 // ---------------------------------------------------------------------------
 // Mock data
 // ---------------------------------------------------------------------------
-
-const MOCK_CONTACTS = [
-  { id: 'c1', name: 'Jane Cooper', email: 'jane@acme.com' },
-  { id: 'c2', name: 'Robert Fox', email: 'robert@globex.com' },
-  { id: 'c3', name: 'Leslie Alexander', email: 'leslie@wayne.com' },
-];
-
-const MOCK_ACCOUNTS = [
-  { id: 'a1', name: 'Acme Corp' },
-  { id: 'a2', name: 'Globex Inc' },
-  { id: 'a3', name: 'Wayne Industries' },
-];
 
 const MOCK_AI_SUMMARY =
   'Discussion covered Q1 goals and proposal timeline. Contact requested formal proposal by end of week. Follow-up call scheduled for next Wednesday.';
@@ -122,6 +135,8 @@ const MOCK_DRAFTS: Record<DraftTone, { text: string; confidence: number }> = {
     { text: 'Hi — Attaching the proposal from our call. Let me know if you have questions or want to schedule a follow-up.', confidence: 85 },
   warm:
     { text: "Hi [Contact], It was great connecting! As promised, here’s the proposal we talked about. Happy to jump on a quick call if anything needs clarification. Thanks!", confidence: 82 },
+  detailed:
+    { text: 'Following our discussion on Q1 goals and the proposal timeline: we agreed to send the formal proposal by end of week and schedule a follow-up call for Wednesday.', confidence: 85 },
 };
 
 const DRAFT_TONE_LABELS: Record<DraftTone, string> = {
@@ -129,6 +144,7 @@ const DRAFT_TONE_LABELS: Record<DraftTone, string> = {
   formal: 'Formal',
   concise: 'Concise',
   warm: 'Warm',
+  detailed: 'Detailed',
 };
 
 const MOCK_EMAILS = [
@@ -403,7 +419,20 @@ function DateFieldWithCalendar({
 // Page
 // ---------------------------------------------------------------------------
 
+function contactDisplayName(c: Contact): string {
+  const name = [c.first_name, c.last_name].filter(Boolean).join(' ');
+  return name || c.email || c.id;
+}
+
 export default function ActivityPage(): React.ReactElement {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const activityId = searchParams.get('id');
+  const urlContactId = searchParams.get('contact_id');
+  const urlCompanyId = searchParams.get('company_id');
+  const urlContactName = searchParams.get('contact_name');
+  const urlAccountName = searchParams.get('account_name');
+
   const [noteContent, setNoteContent] = React.useState('');
   const [processingStep, setProcessingStep] = React.useState<ProcessingStep>('idle');
   const [contactSearch, setContactSearch] = React.useState('');
@@ -412,8 +441,14 @@ export default function ActivityPage(): React.ReactElement {
   const [accountFocused, setAccountFocused] = React.useState(false);
   const contactRef = React.useRef<HTMLDivElement>(null);
   const accountRef = React.useRef<HTMLDivElement>(null);
-  const [selectedContactId, setSelectedContactId] = React.useState<string | null>(null);
-  const [selectedAccountId, setSelectedAccountId] = React.useState<string | null>(null);
+  const [selectedContact, setSelectedContact] = React.useState<Contact | null>(null);
+  const [selectedAccount, setSelectedAccount] = React.useState<CompanySearchResult | null>(null);
+  const [contactOptions, setContactOptions] = React.useState<Contact[]>([]);
+  const [accountOptions, setAccountOptions] = React.useState<CompanySearchResult[]>([]);
+  const [contactsByCompany, setContactsByCompany] = React.useState<Contact[]>([]);
+  const [activity, setActivity] = React.useState<Awaited<ReturnType<typeof getActivity>> | null>(null);
+  const [activityLoading, setActivityLoading] = React.useState(true);
+  const [processingError, setProcessingError] = React.useState<string | null>(null);
   const [activityType, setActivityType] = React.useState<string>('');
   const [activityOutcome, setActivityOutcome] = React.useState<string>('');
   const [emailImportQuery, setEmailImportQuery] = React.useState('');
@@ -422,41 +457,114 @@ export default function ActivityPage(): React.ReactElement {
   const [textImportFocused, setTextImportFocused] = React.useState(false);
   const emailImportRef = React.useRef<HTMLDivElement>(null);
   const textImportRef = React.useRef<HTMLDivElement>(null);
-  const [startDate, setStartDate] = React.useState('');
-  const [startDateConfidence, setStartDateConfidence] = React.useState(85);
+  const [activityDate, setActivityDate] = React.useState(() => format(new Date(), 'yyyy-MM-dd'));
   const [dueDate, setDueDate] = React.useState('');
-  const [dueDateConfidence, setDueDateConfidence] = React.useState(78);
+  const [recognisedDate, setRecognisedDate] = React.useState<{ date: string | null; label: string | null; confidence: number }>({ date: null, label: null, confidence: 0 });
+  const [recommendedTouch, setRecommendedTouch] = React.useState<{ date: string; label: string; rationale: string } | null>(null);
   const [urgency, setUrgency] = React.useState<UrgencyLevel>('medium');
-  const [subject, setSubject] = React.useState(MOCK_EXTRACTED.subject);
-  const [nextSteps, setNextSteps] = React.useState(MOCK_EXTRACTED.nextSteps);
-  const [questionsRaised, setQuestionsRaised] = React.useState(
-    MOCK_EXTRACTED.questionsRaised
-  );
+  const [subject, setSubject] = React.useState('');
+  const [nextSteps, setNextSteps] = React.useState('');
+  const [questionsRaised, setQuestionsRaised] = React.useState('');
+  const [subjectConfidence, setSubjectConfidence] = React.useState(0);
+  const [nextStepsConfidence, setNextStepsConfidence] = React.useState(0);
+  const [questionsConfidence, setQuestionsConfidence] = React.useState(0);
   const [selectedDraftTone, setSelectedDraftTone] = React.useState<DraftTone>('original');
-  const [drafts, setDrafts] = React.useState<Record<DraftTone, { text: string; confidence: number }>>(MOCK_DRAFTS);
+  const [drafts, setDrafts] = React.useState<Record<string, { text: string; confidence: number }>>(MOCK_DRAFTS);
   const [regeneratingTone, setRegeneratingTone] = React.useState<DraftTone | null>(null);
-  const [summaryDraft, setSummaryDraft] = React.useState(MOCK_AI_SUMMARY);
+  const [summaryDraft, setSummaryDraft] = React.useState('');
   const [submitConfirmOpen, setSubmitConfirmOpen] = React.useState(false);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
-  const [confirmUpdateActivity, setConfirmUpdateActivity] = React.useState(true);
-  const [confirmClonePriorNotes, setConfirmClonePriorNotes] = React.useState(false);
-  const [confirmMarkComplete, setConfirmMarkComplete] = React.useState(true);
-  const [confirmCreateOpportunity, setConfirmCreateOpportunity] = React.useState(false);
-  const [confirmLinkContact, setConfirmLinkContact] = React.useState(true);
-  const [confirmLinkAccount, setConfirmLinkAccount] = React.useState(true);
+  const [markCompleteSelected, setMarkCompleteSelected] = React.useState(false);
   const [previewEditOpen, setPreviewEditOpen] = React.useState(false);
-  const [previewContent, setPreviewContent] = React.useState(MOCK_DRAFTS.original.text);
+  const [previewContent, setPreviewContent] = React.useState('');
   const [editingDraftTone, setEditingDraftTone] = React.useState<DraftTone | null>(null);
   const [isRegeneratingInPreview, setIsRegeneratingInPreview] = React.useState(false);
+  const [previousNotesForSubmit, setPreviousNotesForSubmit] = React.useState('');
+
+  // Pre-fill contact and account from URL (dashboard Open passes these)
+  React.useEffect(() => {
+    if (urlContactName || urlContactId) {
+      setContactSearch(decodeURIComponent(urlContactName ?? ''));
+      if (urlContactId) {
+        setSelectedContact({
+          id: urlContactId,
+          first_name: decodeURIComponent(urlContactName ?? ''),
+          last_name: undefined,
+          email: undefined,
+          company_id: urlCompanyId ?? undefined,
+          company_name: urlAccountName ? decodeURIComponent(urlAccountName) : undefined,
+        } as Contact);
+      }
+    }
+    if (urlAccountName || urlCompanyId) {
+      setAccountSearch(decodeURIComponent(urlAccountName ?? ''));
+      if (urlCompanyId) {
+        setSelectedAccount({
+          id: urlCompanyId,
+          name: decodeURIComponent(urlAccountName ?? ''),
+          domain: undefined,
+          city: undefined,
+          state: undefined,
+        });
+      }
+    }
+  }, [urlContactId, urlCompanyId, urlContactName, urlAccountName]);
+
+  // Load activity when opening from dashboard (id in URL); merges with URL pre-fill
+  React.useEffect(() => {
+    if (!activityId) {
+      setActivityLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setActivityLoading(true);
+    getActivity(activityId)
+      .then((a) => {
+        if (cancelled) return;
+        setActivity(a);
+        setPreviousNotesForSubmit((a.body ?? '').trim());
+        if (a.subject) setSubject(a.subject);
+        const contact = a.contacts?.[0];
+        const company = a.companies?.[0];
+        if (contact) {
+          setSelectedContact({
+            id: contact.id,
+            first_name: contact.first_name,
+            last_name: contact.last_name,
+            email: contact.email ?? undefined,
+            company_id: company?.id ?? undefined,
+            company_name: company?.name ?? undefined,
+          } as Contact);
+          setContactSearch([contact.first_name, contact.last_name].filter(Boolean).join(' ') || contact.email || '');
+        }
+        if (company) {
+          setSelectedAccount({ id: company.id, name: company.name ?? undefined, domain: undefined, city: undefined, state: undefined });
+          setAccountSearch(company.name ?? '');
+        }
+        // Keep URL pre-fill for body/subject even when API has no contact/company
+        setActivityLoading(false);
+      })
+      .catch(() => {
+        if (!cancelled) setActivityLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [activityId]);
+
+  // When account is selected, load contacts for that company
+  React.useEffect(() => {
+    if (!selectedAccount?.id) {
+      setContactsByCompany([]);
+      return;
+    }
+    getContactsByCompany(selectedAccount.id).then(setContactsByCompany).catch(() => setContactsByCompany([]));
+  }, [selectedAccount?.id]);
 
   const lowConfidenceFields = React.useMemo(() => {
     const list: string[] = [];
-    if (MOCK_EXTRACTED.questionsRaisedConfidence < LOW_CONFIDENCE_THRESHOLD)
-      list.push('Questions Raised');
-    if (startDateConfidence < LOW_CONFIDENCE_THRESHOLD) list.push('Start Date');
-    if (dueDateConfidence < LOW_CONFIDENCE_THRESHOLD) list.push('Due Date');
+    if (questionsConfidence > 0 && questionsConfidence < LOW_CONFIDENCE_THRESHOLD) list.push('Questions Raised');
+    if (subjectConfidence > 0 && subjectConfidence < LOW_CONFIDENCE_THRESHOLD) list.push('Subject');
     return list;
-  }, [startDateConfidence, dueDateConfidence]);
+  }, [subjectConfidence, questionsConfidence]);
 
   const showErrorBanner = lowConfidenceFields.length > 0 && processingStep === 'ready';
 
@@ -499,49 +607,139 @@ export default function ActivityPage(): React.ReactElement {
     );
   }, [textImportQuery]);
 
-  const filteredContacts = React.useMemo(() => {
+  const debouncedContactQuery = useDebouncedValue(contactSearch.trim(), DEBOUNCE_MS);
+  const debouncedAccountQuery = useDebouncedValue(accountSearch.trim(), DEBOUNCE_MS);
+
+  const [contactSearchLoading, setContactSearchLoading] = React.useState(false);
+  const [accountSearchLoading, setAccountSearchLoading] = React.useState(false);
+
+  // Contact search: when account selected use contactsByCompany (filtered); else API search. Skip search when value matches current selection (seamless pre-fill).
+  React.useEffect(() => {
+    if (selectedAccount?.id) {
+      setContactOptions([]);
+      return;
+    }
+    if (!debouncedContactQuery) {
+      setContactOptions([]);
+      return;
+    }
+    const selectedDisplay = selectedContact ? contactDisplayName(selectedContact) : '';
+    if (selectedContact && debouncedContactQuery === selectedDisplay.trim()) {
+      setContactOptions([]);
+      return;
+    }
+    let cancelled = false;
+    setContactSearchLoading(true);
+    searchContacts(debouncedContactQuery)
+      .then((list) => {
+        if (!cancelled) setContactOptions(list);
+      })
+      .catch(() => {
+        if (!cancelled) setContactOptions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setContactSearchLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [debouncedContactQuery, selectedAccount?.id, selectedContact]);
+
+  const contactSuggestions = React.useMemo(() => {
     const q = contactSearch.trim().toLowerCase();
-    if (!q) return MOCK_CONTACTS;
-    return MOCK_CONTACTS.filter(
-      (c) =>
-        c.name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q)
-    );
-  }, [contactSearch]);
+    if (selectedAccount?.id) {
+      if (!q) return contactsByCompany.slice(0, 10);
+      return contactsByCompany.filter(
+        (c) =>
+          contactDisplayName(c).toLowerCase().includes(q) ||
+          (c.email?.toLowerCase().includes(q))
+      ).slice(0, 10);
+    }
+    return contactOptions.slice(0, 10);
+  }, [contactSearch, selectedAccount?.id, contactsByCompany, contactOptions]);
 
-  const filteredAccounts = React.useMemo(() => {
-    const q = accountSearch.trim().toLowerCase();
-    if (!q) return MOCK_ACCOUNTS;
-    return MOCK_ACCOUNTS.filter((a) => a.name.toLowerCase().includes(q));
-  }, [accountSearch]);
+  // Account search: API-backed debounced. Skip search when value matches current selection (seamless pre-fill).
+  React.useEffect(() => {
+    if (!debouncedAccountQuery) {
+      setAccountOptions([]);
+      return;
+    }
+    const selectedName = (selectedAccount?.name ?? '').trim();
+    if (selectedAccount && debouncedAccountQuery === selectedName) {
+      setAccountOptions([]);
+      return;
+    }
+    let cancelled = false;
+    setAccountSearchLoading(true);
+    searchCompanies(debouncedAccountQuery)
+      .then((list) => {
+        if (!cancelled) setAccountOptions(list);
+      })
+      .catch(() => {
+        if (!cancelled) setAccountOptions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setAccountSearchLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [debouncedAccountQuery, selectedAccount]);
 
-  const handleSendForProcessing = () => {
+  const accountSuggestions = React.useMemo(() => accountOptions.slice(0, 10), [accountOptions]);
+
+  const handleSendForProcessing = async () => {
+    if (!activityId || !noteContent.trim()) return;
+    setProcessingError(null);
     setProcessingStep('sent');
-    setTimeout(() => setProcessingStep('extracting'), 800);
-    setTimeout(() => setProcessingStep('ready'), 2500);
+    setProcessingStep('extracting');
+    try {
+      const res = await processActivityNotes(activityId, { note_text: noteContent });
+      setProcessingStep('ready');
+      setSummaryDraft(res.summary);
+      setRecognisedDate({
+        date: res.recognised_date.date,
+        label: res.recognised_date.label,
+        confidence: res.recognised_date.confidence,
+      });
+      setRecommendedTouch(res.recommended_touch_date ?? null);
+      setSubject(res.metadata.subject);
+      setNextSteps(res.metadata.next_steps);
+      setQuestionsRaised(res.metadata.questions_raised);
+      setUrgency(res.metadata.urgency);
+      setSubjectConfidence(res.metadata.subject_confidence);
+      setNextStepsConfidence(res.metadata.next_steps_confidence);
+      setQuestionsConfidence(res.metadata.questions_confidence);
+      const draftMap: Record<string, { text: string; confidence: number }> = {};
+      Object.entries(res.drafts ?? {}).forEach(([k, v]) => {
+        draftMap[k] = { text: v.text, confidence: v.confidence };
+      });
+      setDrafts(draftMap);
+    } catch (e) {
+      setProcessingError(e instanceof Error ? e.message : 'Processing failed');
+      setProcessingStep('idle');
+    }
   };
 
-  const handleApplyStartDate = () => {
-    setStartDate(
-      new Date().toISOString().slice(0, 10)
-    );
-    setStartDateConfidence(100);
-  };
-  const handleApplyDueDate = () => {
-    setDueDate(
-      new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-    );
-    setDueDateConfidence(100);
+  const handleApplyRecognisedDate = () => {
+    if (recognisedDate.date) setActivityDate(recognisedDate.date);
   };
 
-  const handleRegenerate = (tone: DraftTone) => {
+  const handleApplyRecommendedDate = () => {
+    if (recommendedTouch?.date) setDueDate(recommendedTouch.date);
+  };
+
+  const handleRegenerate = async (tone: DraftTone) => {
+    if (!activityId || tone === 'original') return;
     setRegeneratingTone(tone);
-    setTimeout(() => {
-      setDrafts((prev) => ({
-        ...prev,
-        [tone]: { ...prev[tone], text: prev[tone].text + ' (regenerated)' },
-      }));
+    try {
+      const res = await regenerateActivityDraft(activityId, {
+        tone,
+        current_note: noteContent,
+        previous_notes: previousNotesForSubmit,
+      });
+      setDrafts((prev) => ({ ...prev, [tone]: { text: res.text, confidence: res.confidence } }));
+    } catch {
+      // keep existing draft
+    } finally {
       setRegeneratingTone(null);
-    }, 1200);
+    }
   };
 
   const openPreview = (tone: DraftTone) => {
@@ -597,7 +795,7 @@ export default function ActivityPage(): React.ReactElement {
               onChange={(e) => setNoteContent(e.target.value)}
               className="min-h-[200px] resize-y"
               maxLength={CHAR_LIMIT}
-              disabled={processingStep !== 'idle'}
+              disabled={processingStep === 'sent' || processingStep === 'extracting'}
             />
             <div className="flex items-center justify-between text-xs text-muted-foreground">
               <span>
@@ -625,10 +823,13 @@ export default function ActivityPage(): React.ReactElement {
                 />
               </div>
             )}
+            {processingError && (
+              <p className="text-sm text-status-at-risk">{processingError}</p>
+            )}
             <div className="flex gap-2">
               <Button
                 onClick={handleSendForProcessing}
-                disabled={processingStep !== 'idle' && processingStep !== 'ready'}
+                disabled={!activityId || !noteContent.trim() || (processingStep !== 'idle' && processingStep !== 'ready')}
                 className="gap-2"
               >
                 {(processingStep === 'sent' || processingStep === 'extracting') ? (
@@ -780,33 +981,46 @@ export default function ActivityPage(): React.ReactElement {
                   placeholder="Search contacts..."
                   className="pl-8"
                 />
-                {(contactFocused || contactSearch) && (
-                  <div className="absolute top-full left-0 right-0 z-10 mt-1 border border-border rounded-lg bg-card shadow-lg max-h-40 overflow-auto">
-                    {filteredContacts.length === 0 ? (
-                      <div className="px-3 py-2 text-sm text-muted-foreground">
-                        No contacts found
-                      </div>
+                {contactFocused && (contactSearchLoading || contactSuggestions.length > 0) && (
+                  <ul
+                    className="absolute z-10 mt-1 w-full rounded-md border border-border bg-popover py-1 shadow-soft-lg max-h-48 overflow-auto"
+                    role="listbox"
+                  >
+                    {contactSearchLoading && !selectedAccount?.id ? (
+                      <li className="px-3 py-2 text-sm text-muted-foreground flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Searching...
+                      </li>
+                    ) : contactSuggestions.length === 0 ? (
+                      <li className="px-3 py-2 text-sm text-muted-foreground">
+                        {selectedAccount?.id
+                          ? 'No contacts for this account. Type to filter.'
+                          : 'No results. Type to search contacts.'}
+                      </li>
                     ) : (
-                      filteredContacts.map((contact, i) => (
-                        <button
+                      contactSuggestions.map((contact, i) => (
+                        <li
                           key={contact.id}
-                          type="button"
+                          role="option"
+                          className="cursor-pointer px-3 py-2 text-sm hover:bg-accent w-full text-left"
                           onClick={() => {
-                            setContactSearch(contact.name);
-                            setSelectedContactId(contact.id);
+                            setContactSearch(contactDisplayName(contact));
+                            setSelectedContact(contact);
+                            if (contact.company_id && contact.company_name) {
+                              setSelectedAccount({ id: contact.company_id, name: contact.company_name, domain: undefined, city: undefined, state: undefined });
+                              setAccountSearch(contact.company_name);
+                            }
                             setContactFocused(false);
                           }}
-                          className={cn(
-                            'w-full text-left px-3 py-2 hover:bg-muted transition-colors',
-                            i < filteredContacts.length - 1 && 'border-b border-border'
-                          )}
                         >
-                          <p className="font-medium text-sm">{contact.name}</p>
-                          <p className="text-xs text-muted-foreground">{contact.email}</p>
-                        </button>
+                          <p className="font-medium">{contactDisplayName(contact)}</p>
+                          {contact.email ? (
+                            <p className="text-xs text-muted-foreground">{contact.email}</p>
+                          ) : null}
+                        </li>
                       ))
                     )}
-                  </div>
+                  </ul>
                 )}
               </div>
             </div>
@@ -824,32 +1038,45 @@ export default function ActivityPage(): React.ReactElement {
                   placeholder="Search accounts..."
                   className="pl-8"
                 />
-                {(accountFocused || accountSearch) && (
-                  <div className="absolute top-full left-0 right-0 z-10 mt-1 border border-border rounded-lg bg-card shadow-lg max-h-40 overflow-auto">
-                    {filteredAccounts.length === 0 ? (
-                      <div className="px-3 py-2 text-sm text-muted-foreground">
-                        No accounts found
-                      </div>
+                {accountFocused && (accountSearchLoading || accountSuggestions.length > 0) && (
+                  <ul
+                    className="absolute z-10 mt-1 w-full rounded-md border border-border bg-popover py-1 shadow-soft-lg max-h-48 overflow-auto"
+                    role="listbox"
+                  >
+                    {accountSearchLoading ? (
+                      <li className="px-3 py-2 text-sm text-muted-foreground flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Searching...
+                      </li>
+                    ) : accountSuggestions.length === 0 ? (
+                      <li className="px-3 py-2 text-sm text-muted-foreground">
+                        No accounts found. Type to search.
+                      </li>
                     ) : (
-                      filteredAccounts.map((account, i) => (
-                        <button
+                      accountSuggestions.map((account) => (
+                        <li
                           key={account.id}
-                          type="button"
+                          role="option"
+                          className="cursor-pointer px-3 py-2 text-sm hover:bg-accent w-full text-left"
                           onClick={() => {
-                            setAccountSearch(account.name);
-                            setSelectedAccountId(account.id);
+                            setAccountSearch(account.name ?? '');
+                            setSelectedAccount(account);
+                            // Only clear contact if it's not associated with the selected account
+                            if (selectedContact?.company_id !== account.id) {
+                              setSelectedContact(null);
+                              setContactSearch('');
+                            }
                             setAccountFocused(false);
                           }}
-                          className={cn(
-                            'w-full text-left px-3 py-2 hover:bg-muted transition-colors',
-                            i < filteredAccounts.length - 1 && 'border-b border-border'
-                          )}
                         >
-                          <p className="font-medium text-sm">{account.name}</p>
-                        </button>
+                          {account.name ?? account.id}
+                          {account.domain ? (
+                            <span className="text-muted-foreground ml-1 text-xs">({account.domain})</span>
+                          ) : null}
+                        </li>
                       ))
                     )}
-                  </div>
+                  </ul>
                 )}
               </div>
             </div>
@@ -927,29 +1154,38 @@ export default function ActivityPage(): React.ReactElement {
             <CardTitle className="text-base">Quick Actions</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <Button variant="outline" className="w-full">
-              Mark Complete
-            </Button>
-            <div>
-              <Label className="text-sm text-muted-foreground">Reminder</Label>
-              <div className="flex flex-wrap gap-2 mt-2">
-                {['Next Week', 'After 2 Weeks', 'After 4 Weeks'].map((label) => (
-                  <button
-                    key={label}
-                    type="button"
-                    className="px-3 py-1.5 rounded-full border border-border bg-background text-sm hover:bg-accent transition-colors"
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            {activityId ? (
+              <Button
+                variant={markCompleteSelected ? 'default' : 'outline'}
+                className="w-full"
+                onClick={() => setMarkCompleteSelected((v) => !v)}
+              >
+                <CheckCircle2 className={cn('h-4 w-4 mr-2', markCompleteSelected && 'opacity-90')} />
+                Mark Complete
+              </Button>
+            ) : null}
             <Button
               className="w-full"
               onClick={() => setSubmitConfirmOpen(true)}
+              disabled={
+                activityLoading ||
+                (activityId
+                  ? false
+                  : !(
+                      noteContent.trim() &&
+                      subject.trim() &&
+                      selectedContact &&
+                      selectedAccount
+                    ))
+              }
             >
-              Submit Activity
+              {activityId ? 'Submit Activity' : 'Create Activity'}
             </Button>
+            {!activityId && !activityLoading && !(noteContent.trim() && subject.trim() && selectedContact && selectedAccount) ? (
+              <p className="text-xs text-muted-foreground mt-2">
+                Fill in meeting notes, subject, contact, and account to create a new activity.
+              </p>
+            ) : null}
           </CardContent>
         </Card>
         </div>
@@ -960,18 +1196,11 @@ export default function ActivityPage(): React.ReactElement {
         <div className="w-full max-w-3xl flex flex-col gap-6">
         {/* 1. Summary of Communication History - first section */}
         <Card className="border-primary/30 bg-primary/5">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardHeader className="space-y-0 pb-2">
             <CardTitle className="text-base flex items-center gap-2">
               <RefreshCw className="h-4 w-4 text-primary" />
               Summary of Communication History
             </CardTitle>
-            {processingStep !== 'extracting' && (
-              <div className="flex gap-1">
-                <Button variant="ghost" size="sm">Use Draft</Button>
-                <Button variant="ghost" size="sm">Edit</Button>
-                <Button variant="ghost" size="sm" className="text-status-at-risk">Discard</Button>
-              </div>
-            )}
           </CardHeader>
           <CardContent>
             {processingStep === 'extracting' ? (
@@ -983,7 +1212,7 @@ export default function ActivityPage(): React.ReactElement {
               </div>
             ) : (
               <p className="text-sm text-muted-foreground line-clamp-3">
-                {summaryDraft}
+                {summaryDraft || 'Send for processing to generate a summary from the full notes.'}
               </p>
             )}
           </CardContent>
@@ -1004,116 +1233,191 @@ export default function ActivityPage(): React.ReactElement {
           </Card>
         )}
 
-        {/* 3. Recognized Dates */}
+        {/* 3. Dates (Activity Date + Due Date) */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Recognized Dates</CardTitle>
+            <CardTitle className="text-base">Dates</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {processingStep === 'extracting' ? (
+              <div className="space-y-4">
+                <Skeleton variant="text" className="h-4 w-20 mb-2" />
+                <Skeleton variant="rectangle" className="h-9 w-full max-w-[180px]" />
+              </div>
+            ) : (
+            <>
+            <div className="space-y-1">
+              <Label>Activity Date</Label>
+              <p className="text-xs text-muted-foreground">Date the task was performed (used for notes)</p>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="w-full justify-start text-left font-normal"
+                  >
+                    <CalendarIcon className="mr-2 h-4 w-4 shrink-0" />
+                    {activityDate ? format(new Date(activityDate + 'T00:00:00'), 'MMM d, yyyy') : 'Pick a date'}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={activityDate ? new Date(activityDate + 'T00:00:00') : undefined}
+                    onSelect={(d) => setActivityDate(d ? format(d, 'yyyy-MM-dd') : '')}
+                  />
+                </PopoverContent>
+              </Popover>
+            </div>
+            <div className="space-y-1">
+              <Label>Due Date</Label>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="w-full justify-start text-left font-normal"
+                  >
+                    <CalendarIcon className="mr-2 h-4 w-4 shrink-0" />
+                    {dueDate ? format(new Date(dueDate + 'T00:00:00'), 'MMM d, yyyy') : 'Pick a date'}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={dueDate ? new Date(dueDate + 'T00:00:00') : undefined}
+                    onSelect={(d) => setDueDate(d ? format(d, 'yyyy-MM-dd') : '')}
+                  />
+                </PopoverContent>
+              </Popover>
+            </div>
+            {recognisedDate.date && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm text-muted-foreground">
+                  Recognised date: {recognisedDate.label ?? recognisedDate.date}
+                </span>
+                <Button variant="outline" size="sm" onClick={handleApplyRecognisedDate}>
+                  Apply
+                </Button>
+              </div>
+            )}
+            {recommendedTouch && (
+              <div className="flex flex-wrap justify-between items-start gap-2 rounded-md border border-border p-3">
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold text-sm">Recommended touch date</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{recommendedTouch.rationale}</p>
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <Button variant="default" size="sm" onClick={handleApplyRecommendedDate}>
+                    <CheckCircle2 className="h-4 w-4 mr-1" />
+                    Apply
+                  </Button>
+                </div>
+              </div>
+            )}
+            </>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 4. Extracted Metadata */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Extracted Metadata</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {processingStep === 'extracting' ? (
               <div className="space-y-4">
                 <div>
-                  <Skeleton variant="text" className="h-4 w-20 mb-2" />
-                  <Skeleton variant="rectangle" className="h-9 w-full max-w-[180px]" />
+                  <Skeleton variant="text" className="h-4 w-16 mb-2" />
+                  <Skeleton variant="rectangle" className="h-9 w-full" />
                 </div>
                 <div>
-                  <Skeleton variant="text" className="h-4 w-20 mb-2" />
-                  <Skeleton variant="rectangle" className="h-9 w-full max-w-[180px]" />
+                  <Skeleton variant="text" className="h-4 w-24 mb-2" />
+                  <Skeleton variant="rectangle" className="h-[4.5rem] w-full" />
+                </div>
+                <div>
+                  <Skeleton variant="text" className="h-4 w-28 mb-2" />
+                  <Skeleton variant="rectangle" className="h-[4.5rem] w-full" />
+                </div>
+                <div>
+                  <Skeleton variant="text" className="h-4 w-24 mb-2" />
+                  <div className="flex gap-2 mt-1">
+                    <Skeleton variant="rectangle" className="h-9 w-16" />
+                    <Skeleton variant="rectangle" className="h-9 w-20" />
+                    <Skeleton variant="rectangle" className="h-9 w-16" />
+                  </div>
                 </div>
               </div>
             ) : (
             <>
-            <div className="flex flex-wrap items-end gap-2">
-              <div className="flex-1 min-w-[180px]">
-                <DateFieldWithCalendar
-                  label="Start Date"
-                  date={startDate}
-                  onDateChange={(d) =>
-                    setStartDate(d ? format(d, 'yyyy-MM-dd') : '')
-                  }
-                  confidence={startDateConfidence}
-                  warning={startDateConfidence < LOW_CONFIDENCE_THRESHOLD}
-                />
-              </div>
-              <Button variant="outline" size="sm" onClick={handleApplyStartDate}>
-                Apply
-              </Button>
-              <Button variant="ghost" size="sm">Override</Button>
+            <div>
+              <Label className="flex items-center gap-2">
+                Upcoming Task - Subject
+                {subjectConfidence > 0 && <ConfidenceBadge value={subjectConfidence} />}
+              </Label>
+              <Input
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                className="mt-2"
+              />
             </div>
-            <div className="flex flex-wrap items-end gap-2">
-              <div className="flex-1 min-w-[180px]">
-                <DateFieldWithCalendar
-                  label="Due Date"
-                  date={dueDate}
-                  onDateChange={(d) =>
-                    setDueDate(d ? format(d, 'yyyy-MM-dd') : '')
-                  }
-                  confidence={dueDateConfidence}
-                  warning={dueDateConfidence < LOW_CONFIDENCE_THRESHOLD}
+            <div>
+              <Label className="flex items-center gap-2">
+                Next Steps
+                {nextStepsConfidence > 0 && <ConfidenceBadge value={nextStepsConfidence} />}
+              </Label>
+              <Textarea
+                value={nextSteps}
+                onChange={(e) => setNextSteps(e.target.value)}
+                className="mt-2"
+                rows={2}
+              />
+            </div>
+            <div>
+              <Label className="flex items-center gap-2">
+                Questions Raised
+                {questionsConfidence > 0 && (
+                  <ConfidenceBadge value={questionsConfidence} />
+                )}
+              </Label>
+              <Textarea
+                value={questionsRaised}
+                onChange={(e) => setQuestionsRaised(e.target.value)}
+                className={cn(
+                  'mt-2',
+                  questionsConfidence > 0 && questionsConfidence < LOW_CONFIDENCE_THRESHOLD && 'border-status-cooling'
+                )}
+                rows={2}
+              />
+            </div>
+            <div>
+              <Label>Urgency Level</Label>
+              <div className="flex gap-2 mt-2">
+                <UrgencyButton
+                  label="Low"
+                  active={urgency === 'low'}
+                  onClick={() => setUrgency('low')}
+                />
+                <UrgencyButton
+                  label="Medium"
+                  active={urgency === 'medium'}
+                  onClick={() => setUrgency('medium')}
+                />
+                <UrgencyButton
+                  label="High"
+                  active={urgency === 'high'}
+                  onClick={() => setUrgency('high')}
                 />
               </div>
-              <Button variant="outline" size="sm" onClick={handleApplyDueDate}>
-                Apply
-              </Button>
-              <Button variant="ghost" size="sm">Override</Button>
             </div>
             </>
             )}
           </CardContent>
         </Card>
 
-        {/* 4. Recommended Touch Dates */}
-        <Card className="border-primary/30 bg-primary/5">
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-primary" />
-              Recommended Touch Dates
-            </CardTitle>
-            <p className="text-sm text-muted-foreground mt-1">
-              Based on relationship health and prior patterns, we suggest:
-            </p>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {processingStep === 'extracting' ? (
-              <div className="space-y-3">
-                {[1, 2].map((i) => (
-                  <div key={i} className="rounded-md border border-border p-3 flex flex-col gap-2">
-                    <Skeleton variant="text" className="h-4 w-32" />
-                    <Skeleton variant="text" className="h-3 w-full" />
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <>
-                {MOCK_RECOMMENDED_DATES.map((rec) => (
-                  <div
-                    key={rec.id}
-                    className="flex flex-wrap justify-between items-start gap-2 rounded-md border border-border p-3"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="font-semibold text-sm">{rec.label}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">{rec.rationale}</p>
-                    </div>
-                    <div className="flex gap-2 shrink-0">
-                      <Button variant="default" size="sm" className="gap-1">
-                        <CheckCircle2 className="h-4 w-4" />
-                        Apply
-                      </Button>
-                      <Button variant="outline" size="sm">
-                        Override
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* 6. AI-Generated Drafts */}
+        {/* 5. AI-Generated Drafts */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">AI-Generated Drafts</CardTitle>
+            <CardTitle className="text-base">AI-Generated Notes</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             {processingStep === 'extracting' ? (
@@ -1124,8 +1428,9 @@ export default function ActivityPage(): React.ReactElement {
               </div>
             ) : (
               <>
-                {(['original', 'formal', 'concise', 'warm'] as const).map((tone) => {
+                {(['original', 'formal', 'concise', 'warm', 'detailed'] as const).map((tone) => {
                   const draft = drafts[tone];
+                  if (!draft) return null;
                   const isSelected = selectedDraftTone === tone;
                   const isRegeneratingThis = regeneratingTone === tone;
                   return (
@@ -1151,31 +1456,38 @@ export default function ActivityPage(): React.ReactElement {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => setSelectedDraftTone(tone)}
+                          onClick={() => {
+                            setSelectedDraftTone(tone);
+                            setNoteContent(draft.text);
+                          }}
                         >
                           Select
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="gap-1"
-                          onClick={() => openPreview(tone)}
-                        >
-                          <Pencil className="h-4 w-4" />
-                          Edit
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="gap-1"
-                          onClick={() => handleRegenerate(tone)}
-                          disabled={isRegeneratingThis}
-                        >
-                          <RotateCw
-                            className={cn('h-4 w-4', isRegeneratingThis && 'animate-spin')}
-                          />
-                          Regenerate
-                        </Button>
+                        {tone !== 'original' && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="gap-1"
+                              onClick={() => openPreview(tone)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                              Edit
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="gap-1"
+                              onClick={() => handleRegenerate(tone)}
+                              disabled={isRegeneratingThis}
+                            >
+                              <RotateCw
+                                className={cn('h-4 w-4', isRegeneratingThis && 'animate-spin')}
+                              />
+                              Regenerate
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </div>
                   );
@@ -1217,103 +1529,6 @@ export default function ActivityPage(): React.ReactElement {
             </div>
           </CardContent>
         </Card>
-
-        {/* 5. Extracted Metadata */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Extracted Metadata</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {processingStep === 'extracting' ? (
-              <div className="space-y-4">
-                <div>
-                  <Skeleton variant="text" className="h-4 w-16 mb-2" />
-                  <Skeleton variant="rectangle" className="h-9 w-full" />
-                </div>
-                <div>
-                  <Skeleton variant="text" className="h-4 w-24 mb-2" />
-                  <Skeleton variant="rectangle" className="h-[4.5rem] w-full" />
-                </div>
-                <div>
-                  <Skeleton variant="text" className="h-4 w-28 mb-2" />
-                  <Skeleton variant="rectangle" className="h-[4.5rem] w-full" />
-                </div>
-                <div>
-                  <Skeleton variant="text" className="h-4 w-24 mb-2" />
-                  <div className="flex gap-2 mt-1">
-                    <Skeleton variant="rectangle" className="h-9 w-16" />
-                    <Skeleton variant="rectangle" className="h-9 w-20" />
-                    <Skeleton variant="rectangle" className="h-9 w-16" />
-                  </div>
-                </div>
-              </div>
-            ) : (
-            <>
-            <div>
-              <Label className="flex items-center gap-2">
-                Subject
-                <ConfidenceBadge value={MOCK_EXTRACTED.subjectConfidence} />
-              </Label>
-              <Input
-                value={subject}
-                onChange={(e) => setSubject(e.target.value)}
-                className="mt-1"
-              />
-            </div>
-            <div>
-              <Label className="flex items-center gap-2">
-                Next Steps
-                <ConfidenceBadge value={MOCK_EXTRACTED.nextStepsConfidence} />
-              </Label>
-              <Textarea
-                value={nextSteps}
-                onChange={(e) => setNextSteps(e.target.value)}
-                className="mt-1"
-                rows={2}
-              />
-            </div>
-            <div>
-              <Label className="flex items-center gap-2">
-                Questions Raised
-                <ConfidenceBadge
-                  value={MOCK_EXTRACTED.questionsRaisedConfidence}
-                />
-              </Label>
-              <Textarea
-                value={questionsRaised}
-                onChange={(e) => setQuestionsRaised(e.target.value)}
-                className={cn(
-                  'mt-1',
-                  MOCK_EXTRACTED.questionsRaisedConfidence <
-                    LOW_CONFIDENCE_THRESHOLD && 'border-status-cooling'
-                )}
-                rows={2}
-              />
-            </div>
-            <div>
-              <Label>Urgency Level</Label>
-              <div className="flex gap-2 mt-1">
-                <UrgencyButton
-                  label="Low"
-                  active={urgency === 'low'}
-                  onClick={() => setUrgency('low')}
-                />
-                <UrgencyButton
-                  label="Medium"
-                  active={urgency === 'medium'}
-                  onClick={() => setUrgency('medium')}
-                />
-                <UrgencyButton
-                  label="High"
-                  active={urgency === 'high'}
-                  onClick={() => setUrgency('high')}
-                />
-              </div>
-            </div>
-            </>
-            )}
-          </CardContent>
-        </Card>
         </div>
       </div>
 
@@ -1321,62 +1536,103 @@ export default function ActivityPage(): React.ReactElement {
       <Dialog open={submitConfirmOpen} onOpenChange={setSubmitConfirmOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Confirm Submission</DialogTitle>
+            <DialogTitle>{activityId ? 'Confirm Submission' : 'Create Activity'}</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Review the actions that will be performed
-          </p>
-          <div className="space-y-3">
-            <ConfirmCheckbox
-              label="Update Activity in CRM"
-              checked={confirmUpdateActivity}
-              onCheckedChange={setConfirmUpdateActivity}
-            />
-            <ConfirmCheckbox
-              label="Clone prior notes"
-              checked={confirmClonePriorNotes}
-              onCheckedChange={setConfirmClonePriorNotes}
-            />
-            <ConfirmCheckbox
-              label="Mark previous Activity as Complete"
-              checked={confirmMarkComplete}
-              onCheckedChange={setConfirmMarkComplete}
-            />
-            <ConfirmCheckbox
-              label="Create Opportunity (75%)"
-              checked={confirmCreateOpportunity}
-              onCheckedChange={setConfirmCreateOpportunity}
-            />
-            <ConfirmCheckbox
-              label="Link Contact: Sarah Johnson"
-              checked={confirmLinkContact}
-              onCheckedChange={setConfirmLinkContact}
-            />
-            <ConfirmCheckbox
-              label="Link Account: TechCorp Industries"
-              checked={confirmLinkAccount}
-              onCheckedChange={setConfirmLinkAccount}
-            />
-          </div>
+          {activityId && markCompleteSelected ? (
+            <p className="text-sm text-muted-foreground">
+              This will mark the activity as complete in HubSpot.
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {activityId
+                ? 'This will update the task in HubSpot with your meeting notes, subject, contact, and account.'
+                : 'This will create a new task in HubSpot with your meeting notes, subject, contact, and account.'}
+              {(() => {
+                const effectiveContactId = activityId
+                  ? selectedContact?.id ?? activity?.contacts?.[0]?.id
+                  : selectedContact?.id;
+                const effectiveCompanyId = activityId
+                  ? selectedAccount?.id ?? activity?.companies?.[0]?.id
+                  : selectedAccount?.id;
+                const hasRequired = noteContent.trim() && subject.trim() && effectiveContactId && effectiveCompanyId;
+                return !hasRequired ? (
+                  <span className="block mt-2 text-status-at-risk">
+                    Please fill in meeting notes, subject, contact, and account before submitting.
+                  </span>
+                ) : null;
+              })()}
+            </p>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setSubmitConfirmOpen(false)} disabled={isSubmitting}>
               Cancel
             </Button>
             <Button
               onClick={async () => {
+                const effectiveContactId = activityId
+                  ? selectedContact?.id ?? activity?.contacts?.[0]?.id
+                  : selectedContact?.id;
+                const effectiveCompanyId = activityId
+                  ? selectedAccount?.id ?? activity?.companies?.[0]?.id
+                  : selectedAccount?.id;
+                if (!noteContent.trim() || !subject.trim() || !effectiveContactId || !effectiveCompanyId) return;
+                if (activityId && markCompleteSelected) {
+                  setIsSubmitting(true);
+                  try {
+                    await submitActivity(activityId, { mark_complete: true });
+                    setSubmitConfirmOpen(false);
+                    setMarkCompleteSelected(false);
+                  } finally {
+                    setIsSubmitting(false);
+                  }
+                  return;
+                }
                 setIsSubmitting(true);
                 try {
-                  await new Promise((r) => setTimeout(r, 800));
-                  setSubmitConfirmOpen(false);
+                  if (activityId) {
+                  await submitActivity(activityId, {
+                    mark_complete: false,
+                    meeting_notes: noteContent.trim(),
+                    activity_date: activityDate || undefined,
+                    due_date: dueDate || undefined,
+                    subject: subject.trim(),
+                    contact_id: effectiveContactId,
+                    company_id: effectiveCompanyId,
+                  });
+                    setSubmitConfirmOpen(false);
+                  } else {
+                    const res = await createAndSubmitActivity({
+                      meeting_notes: noteContent.trim(),
+                      activity_date: activityDate || undefined,
+                      due_date: dueDate || undefined,
+                      subject: subject.trim(),
+                      contact_id: effectiveContactId,
+                      company_id: effectiveCompanyId,
+                    });
+                    setSubmitConfirmOpen(false);
+                    router.push(`/activity?id=${encodeURIComponent(res.id)}`);
+                  }
                 } finally {
                   setIsSubmitting(false);
                 }
               }}
-              disabled={isSubmitting}
+              disabled={
+                isSubmitting ||
+                (activityId && markCompleteSelected
+                  ? false
+                  : !(
+                      noteContent.trim() &&
+                      subject.trim() &&
+                      (activityId
+                        ? (selectedContact?.id ?? activity?.contacts?.[0]?.id) &&
+                          (selectedAccount?.id ?? activity?.companies?.[0]?.id)
+                        : selectedContact?.id && selectedAccount?.id)
+                    ))
+              }
               className="gap-2"
             >
               {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              Confirm & Submit
+              {activityId ? 'Confirm & Submit' : 'Create Activity'}
             </Button>
           </DialogFooter>
         </DialogContent>

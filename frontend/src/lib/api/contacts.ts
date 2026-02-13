@@ -180,3 +180,21 @@ export async function searchContacts(query: string): Promise<Contact[]> {
     );
   }
 }
+
+/**
+ * GET /api/v1/contacts/by-company/{companyId}
+ * List contacts for the given company (for account-scoped contact dropdown).
+ */
+export async function getContactsByCompany(companyId: string): Promise<Contact[]> {
+  try {
+    const res = await fetchApi<ContactListResponse>(
+      `/api/v1/contacts/by-company/${encodeURIComponent(companyId)}`
+    );
+    return res.contacts ?? [];
+  } catch (err) {
+    if (err instanceof ApiClientError) throw err;
+    throw new Error(
+      err instanceof Error ? err.message : 'Failed to fetch contacts for company'
+    );
+  }
+}

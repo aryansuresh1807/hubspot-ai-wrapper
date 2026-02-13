@@ -1,6 +1,6 @@
 """
 Activities endpoints (HubSpot tasks with cache).
-List, get, create, update, delete, complete, and force-sync.
+List, get, create, update, delete, complete, force-sync, process-notes, submit.
 """
 
 import logging
@@ -15,12 +15,29 @@ from app.schemas.activity import (
     ActivityListResponse,
     ActivityResponse,
     ActivitySortOption,
+    ActivitySubmitRequest,
     ActivityUpdate,
     CompanyInfo,
     ContactInfo,
+    CreateAndSubmitResponse,
+    DraftOut,
+    ExtractedMetadataOut,
+    ProcessNotesRequest,
+    ProcessNotesResponse,
+    RecognisedDateOut,
+    RecommendedTouchDateOut,
+    RegenerateDraftRequest,
     SyncStatusResponse,
 )
 from app.schemas.common import MessageResponse
+from app.services.claude_agents import (
+    extract_metadata,
+    extract_recognised_date,
+    generate_drafts,
+    recommend_touch_date,
+    regenerate_single_draft,
+    summarize_communication_history,
+)
 from app.services.hubspot_service import HubSpotService, HubSpotServiceError, get_hubspot_service
 from app.services.supabase_service import SupabaseService, get_supabase_service
 
@@ -255,7 +272,7 @@ async def list_activities(
             except (ValueError, TypeError):
                 pass
 
-        # b) If stale, fetch from HubSpot with associations and store in cache
+        # b) If stale, fetch from HubSpot with associations and replace cache (so deleted tasks disappear)
         if not fresh:
             all_tasks: list[dict[str, Any]] = []
             after: str | None = None
@@ -272,6 +289,7 @@ async def list_activities(
                 after = next_p.get("after")
                 if not after or not results:
                     break
+            await supabase.delete_tasks_cache_for_user(user_id)
             if all_tasks:
                 await supabase.upsert_tasks_cache_bulk(user_id, all_tasks)
 
@@ -377,6 +395,7 @@ async def sync_activities(
             after = (paging.get("next") or {}).get("after")
             if not after or not results:
                 break
+        await supabase.delete_tasks_cache_for_user(user_id)
         if all_tasks:
             await supabase.upsert_tasks_cache_bulk(user_id, all_tasks)
         return SyncStatusResponse(
@@ -417,12 +436,25 @@ async def get_activity(
             if (row.get("hubspot_task_id") or row.get("data", {}).get("id")) == activity_id:
                 data = row.get("data") or {}
                 a = _hubspot_task_to_activity(data)
-                # Enrich with contact details for contact summary
                 contact_ids = a.get("contact_ids") or []
                 if contact_ids:
                     try:
                         contact_list = hubspot.get_contacts_batch(contact_ids)
                         a["contacts"] = contact_list
+                        try:
+                            contact_to_company = hubspot.batch_read_contact_company_ids(contact_ids)
+                            unique_company_ids = list(dict.fromkeys(contact_to_company.values()))
+                            if unique_company_ids:
+                                companies = hubspot.get_companies_batch(unique_company_ids, properties=["name"])
+                                company_name_by_id = {str(co.get("id", "")): (co.get("properties") or {}).get("name") for co in companies}
+                                a["contact_company_names"] = {
+                                    cid: company_name_by_id.get(contact_to_company.get(cid, ""), "") or ""
+                                    for cid in contact_ids
+                                }
+                            else:
+                                a["contact_company_names"] = {cid: "" for cid in contact_ids}
+                        except HubSpotServiceError:
+                            a["contact_company_names"] = {cid: "" for cid in contact_ids}
                     except HubSpotServiceError:
                         pass
                 return _activity_dict_to_response(a)
@@ -433,7 +465,22 @@ async def get_activity(
         contact_ids = a.get("contact_ids") or []
         if contact_ids:
             try:
-                a["contacts"] = hubspot.get_contacts_batch(contact_ids)
+                contact_list = hubspot.get_contacts_batch(contact_ids)
+                a["contacts"] = contact_list
+                try:
+                    contact_to_company = hubspot.batch_read_contact_company_ids(contact_ids)
+                    unique_company_ids = list(dict.fromkeys(contact_to_company.values()))
+                    if unique_company_ids:
+                        companies = hubspot.get_companies_batch(unique_company_ids, properties=["name"])
+                        company_name_by_id = {str(co.get("id", "")): (co.get("properties") or {}).get("name") for co in companies}
+                        a["contact_company_names"] = {
+                            cid: company_name_by_id.get(contact_to_company.get(cid, ""), "") or ""
+                            for cid in contact_ids
+                        }
+                    else:
+                        a["contact_company_names"] = {cid: "" for cid in contact_ids}
+                except HubSpotServiceError:
+                    a["contact_company_names"] = {cid: "" for cid in contact_ids}
             except HubSpotServiceError:
                 pass
         return _activity_dict_to_response(a)
@@ -609,4 +656,344 @@ async def complete_activity(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to complete activity",
+        )
+
+
+@router.post(
+    "/{activity_id}/process-notes",
+    response_model=ProcessNotesResponse,
+    summary="Process notes with LLM",
+    description="Run Claude agents: summary, recognised date, recommended touch date, metadata, drafts.",
+)
+async def process_notes(
+    activity_id: str,
+    body: ProcessNotesRequest,
+    user_id: str = Depends(get_current_user_id),
+    supabase: SupabaseService = Depends(get_supabase_service),
+    hubspot: HubSpotService = Depends(get_hubspot_service),
+) -> ProcessNotesResponse:
+    """POST /api/v1/activities/{activity_id}/process-notes — full LLM processing for activity page."""
+    try:
+        # Load existing activity body (previous notes) for context
+        cached = await supabase.get_tasks_cache(user_id)
+        existing_body = ""
+        for row in cached:
+            if (row.get("hubspot_task_id") or row.get("data", {}).get("id")) == activity_id:
+                data = row.get("data") or {}
+                props = data.get("properties") or {}
+                existing_body = (props.get(HS_BODY) or "").strip()
+                break
+        if not existing_body:
+            try:
+                task = hubspot.get_task(activity_id)
+                props = task.get("properties") or {}
+                existing_body = (props.get(HS_BODY) or "").strip()
+            except HubSpotServiceError:
+                pass
+
+        note_text = (body.note_text or "").strip()
+        full_notes = (existing_body + "\n\n" + note_text).strip() if existing_body else note_text
+
+        summary = summarize_communication_history(full_notes)
+        recognised = extract_recognised_date(note_text)
+        recommended = recommend_touch_date(note_text, existing_body)
+        metadata = extract_metadata(note_text, existing_body)
+        drafts_map = generate_drafts(note_text, existing_body)
+
+        drafts_out: dict[str, DraftOut] = {
+            k: DraftOut(text=v["text"], confidence=v["confidence"])
+            for k, v in drafts_map.items()
+        }
+
+        return ProcessNotesResponse(
+            summary=summary,
+            recognised_date=RecognisedDateOut(
+                date=recognised.get("date"),
+                label=recognised.get("label"),
+                confidence=recognised.get("confidence", 0),
+            ),
+            recommended_touch_date=RecommendedTouchDateOut(
+                date=recommended["date"],
+                label=recommended.get("label", ""),
+                rationale=recommended.get("rationale", ""),
+            ),
+            metadata=ExtractedMetadataOut(
+                subject=metadata["subject"],
+                next_steps=metadata["next_steps"],
+                questions_raised=metadata["questions_raised"],
+                urgency=metadata["urgency"],
+                subject_confidence=metadata["subject_confidence"],
+                next_steps_confidence=metadata["next_steps_confidence"],
+                questions_confidence=metadata["questions_confidence"],
+            ),
+            drafts=drafts_out,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Process notes error: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to process notes",
+        )
+
+
+@router.post(
+    "/create-and-submit",
+    response_model=CreateAndSubmitResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create new activity and submit",
+    description="Create a new task in HubSpot with meeting notes, subject, contact, and account (due date optional).",
+)
+async def create_and_submit_activity(
+    body: ActivitySubmitRequest,
+    user_id: str = Depends(get_current_user_id),
+    supabase: SupabaseService = Depends(get_supabase_service),
+    hubspot: HubSpotService = Depends(get_hubspot_service),
+) -> CreateAndSubmitResponse:
+    """POST /api/v1/activities/create-and-submit — create new task with notes, subject, contact, company."""
+    try:
+        if not (body.meeting_notes and body.meeting_notes.strip()):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Meeting notes are required.",
+            )
+        if not body.subject or not body.subject.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Subject is required.",
+            )
+        if not body.contact_id or not body.contact_id.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Contact is required.",
+            )
+        if not body.company_id or not body.company_id.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Account is required.",
+            )
+        if body.contact_id and body.company_id:
+            company_ids = hubspot.get_contact_company_ids(body.contact_id)
+            if company_ids and body.company_id not in company_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Selected contact is not associated with the selected account.",
+                )
+        # Activity date = when the task was performed (used for note prefix). Default today.
+        if body.activity_date and body.activity_date.strip():
+            try:
+                activity_dt = datetime.strptime(body.activity_date.strip()[:10], "%Y-%m-%d").replace(
+                    tzinfo=timezone.utc
+                )
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Activity date must be YYYY-MM-DD.",
+                )
+        else:
+            activity_dt = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        date_prefix = activity_dt.strftime("%m/%d/%y")
+        new_body = f"{date_prefix} - {body.meeting_notes.strip()}"
+
+        # Due date = task due date in HubSpot. Default today.
+        if body.due_date and body.due_date.strip():
+            try:
+                due_dt = datetime.strptime(body.due_date.strip()[:10], "%Y-%m-%d").replace(
+                    tzinfo=timezone.utc
+                )
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Due date must be YYYY-MM-DD.",
+                )
+        else:
+            due_dt = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        due_dt_utc = due_dt.replace(tzinfo=timezone.utc) if due_dt.tzinfo is None else due_dt
+        ts_ms = int(due_dt_utc.timestamp() * 1000)
+        payload = {
+            "properties": {
+                HS_SUBJECT: body.subject.strip(),
+                HS_BODY: new_body,
+                HS_TIMESTAMP: ts_ms,
+            },
+        }
+        task = hubspot.create_task(payload)
+        tid = task.get("id")
+        if not tid:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="HubSpot did not return task id")
+        tid_str = str(tid)
+        await supabase.upsert_task_cache(user_id, tid_str, task)
+        try:
+            hubspot.associate_task_with_contact(tid_str, body.contact_id)
+        except HubSpotServiceError as ae:
+            logger.warning("Task contact association failed: %s", ae.message)
+        try:
+            hubspot.associate_task_with_company(tid_str, body.company_id)
+        except HubSpotServiceError as ae:
+            logger.warning("Task company association failed: %s", ae.message)
+        return CreateAndSubmitResponse(message="Activity created successfully", id=tid_str)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Create and submit error: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create activity",
+        )
+
+
+@router.post(
+    "/{activity_id}/submit",
+    response_model=MessageResponse,
+    summary="Submit activity",
+    description="Mark complete only, or update task with notes, subject, contact, and account (due date optional; LLM processing not required).",
+)
+async def submit_activity(
+    activity_id: str,
+    body: ActivitySubmitRequest,
+    user_id: str = Depends(get_current_user_id),
+    supabase: SupabaseService = Depends(get_supabase_service),
+    hubspot: HubSpotService = Depends(get_hubspot_service),
+) -> MessageResponse:
+    """POST /api/v1/activities/{activity_id}/submit — mark complete or update task. Full update requires meeting_notes, subject, contact_id, company_id only."""
+    try:
+        if body.mark_complete:
+            payload = {"properties": {HS_STATUS: "COMPLETED"}}
+            task = hubspot.update_task(activity_id, payload)
+            await supabase.upsert_task_cache(user_id, activity_id, task)
+            return MessageResponse(message="Activity marked complete")
+
+        # Full submit: require only meeting_notes, subject, contact_id, company_id (LLM processing not required)
+        if not (body.meeting_notes and body.meeting_notes.strip()):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Meeting notes are required.",
+            )
+        if not body.subject or not body.subject.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Subject is required.",
+            )
+        if not body.contact_id or not body.contact_id.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Contact is required.",
+            )
+        if not body.company_id or not body.company_id.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Account is required.",
+            )
+
+        # Contact/company consistency: contact must belong to company
+        if body.contact_id and body.company_id:
+            company_ids = hubspot.get_contact_company_ids(body.contact_id)
+            if company_ids and body.company_id not in company_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Selected contact is not associated with the selected account.",
+                )
+
+        # Load current task body for prepending new note
+        existing_body = ""
+        try:
+            task = hubspot.get_task(activity_id)
+            props = task.get("properties") or {}
+            existing_body = (props.get(HS_BODY) or "").strip()
+        except HubSpotServiceError as e:
+            if e.status_code == 404:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Activity not found")
+            raise
+
+        # Note prefix uses activity_date (date task was performed). Default today (UTC).
+        if body.activity_date and body.activity_date.strip():
+            try:
+                activity_dt = datetime.strptime(body.activity_date.strip()[:10], "%Y-%m-%d").replace(
+                    tzinfo=timezone.utc
+                )
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Activity date must be YYYY-MM-DD.",
+                )
+        else:
+            activity_dt = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        date_prefix = activity_dt.strftime("%m/%d/%y")
+        new_note_line = f"{date_prefix} - {body.meeting_notes.strip()}"
+        new_body = new_note_line + ("\n\n" + existing_body if existing_body else "")
+
+        # Task due date in HubSpot (HS_TIMESTAMP). Use due_date if provided, else today.
+        if body.due_date and body.due_date.strip():
+            try:
+                due_dt = datetime.strptime(body.due_date.strip()[:10], "%Y-%m-%d").replace(
+                    tzinfo=timezone.utc
+                )
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Due date must be YYYY-MM-DD.",
+                )
+        else:
+            due_dt = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        due_dt_utc = due_dt.replace(tzinfo=timezone.utc) if due_dt.tzinfo is None else due_dt
+        ts_ms = int(due_dt_utc.timestamp() * 1000)
+        payload = {
+            "properties": {
+                HS_SUBJECT: body.subject.strip(),
+                HS_BODY: new_body,
+                HS_TIMESTAMP: ts_ms,
+            },
+        }
+        task = hubspot.update_task(activity_id, payload)
+        await supabase.upsert_task_cache(user_id, activity_id, task)
+
+        # Optionally set associations
+        if body.contact_id:
+            try:
+                hubspot.associate_task_with_contact(activity_id, body.contact_id)
+            except HubSpotServiceError as ae:
+                logger.warning("Task contact association failed: %s", ae.message)
+        if body.company_id:
+            try:
+                hubspot.associate_task_with_company(activity_id, body.company_id)
+            except HubSpotServiceError as ae:
+                logger.warning("Task company association failed: %s", ae.message)
+
+        return MessageResponse(message="Activity updated successfully")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Submit activity error: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to submit activity",
+        )
+
+
+@router.post(
+    "/{activity_id}/regenerate-draft",
+    response_model=DraftOut,
+    summary="Regenerate one draft tone",
+)
+async def regenerate_draft(
+    activity_id: str,
+    body: RegenerateDraftRequest,
+    _user_id: str = Depends(get_current_user_id),
+) -> DraftOut:
+    """POST /api/v1/activities/{activity_id}/regenerate-draft — regenerate a single draft (e.g. formal)."""
+    try:
+        result = regenerate_single_draft(
+            body.current_note,
+            body.previous_notes,
+            body.tone,
+        )
+        return DraftOut(text=result["text"], confidence=result.get("confidence", 75))
+    except Exception as e:
+        logger.exception("Regenerate draft error: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to regenerate draft",
         )

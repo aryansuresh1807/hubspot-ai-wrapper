@@ -33,7 +33,11 @@ HS_MOBILEPHONE = "mobilephone"
 HS_JOBTITLE = "jobtitle"
 
 
-def _hubspot_contact_to_contact(hc: dict[str, Any], company_name: str | None = None) -> Contact:
+def _hubspot_contact_to_contact(
+    hc: dict[str, Any],
+    company_name: str | None = None,
+    company_id: str | None = None,
+) -> Contact:
     """Transform HubSpot contact object to our Contact schema."""
     cid = hc.get("id") or ""
     props = hc.get("properties") or {}
@@ -43,7 +47,7 @@ def _hubspot_contact_to_contact(hc: dict[str, Any], company_name: str | None = N
         email=props.get(HS_EMAIL),
         first_name=props.get(HS_FIRSTNAME),
         last_name=props.get(HS_LASTNAME),
-        company_id=None,
+        company_id=company_id,
         company_name=company_name,
         phone=props.get(HS_PHONE),
         mobile_phone=props.get(HS_MOBILEPHONE),
@@ -155,6 +159,54 @@ async def list_contacts(
 
 
 @router.get(
+    "/by-company/{company_id}",
+    response_model=ContactListResponse,
+    summary="List contacts by company",
+    description="Return contacts associated with the given company. Use for account-scoped contact dropdown.",
+)
+async def list_contacts_by_company(
+    company_id: str,
+    user_id: str = Depends(get_current_user_id),
+    supabase: SupabaseService = Depends(get_supabase_service),
+    hubspot: HubSpotService = Depends(get_hubspot_service),
+) -> ContactListResponse:
+    """GET /api/v1/contacts/by-company/{company_id} — contacts for this account; ensures contact/account consistency."""
+    try:
+        contact_ids = hubspot.get_company_contact_ids(company_id)
+        if not contact_ids:
+            return ContactListResponse(contacts=[])
+        batch = hubspot.get_contacts_batch(
+            contact_ids,
+            properties=["firstname", "lastname", "email", "phone", "mobilephone", "jobtitle", "relationship_status", "notes"],
+        )
+        if batch:
+            await supabase.upsert_contacts_cache_bulk(user_id, batch)
+        company_data = hubspot.get_company(company_id, properties=["name"])
+        props = company_data.get("properties") or {}
+        company_name = props.get("name") or None
+        contacts = [
+            _hubspot_contact_to_contact(c, company_name=company_name, company_id=company_id)
+            for c in batch
+        ]
+        return ContactListResponse(contacts=contacts)
+    except HubSpotServiceError as e:
+        if e.status_code == 404:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=e.message or "HubSpot error",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("List contacts by company error: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to list contacts for company",
+        )
+
+
+@router.get(
     "/search",
     response_model=ContactListResponse,
     summary="Unified contact search",
@@ -172,14 +224,40 @@ async def search_contacts(
         seen: set[str] = set()
         out_contacts: list[Contact] = []
 
-        # 1) Contact search (name, email, phone, etc.)
+        # 1) Contact search (name, email, phone, etc.) — enrich with company_id/company_name so Activity page can auto-fill account
         try:
             cr = hubspot.search_contacts(query=q_trim, limit=100)
             c_results = cr.get("results") or []
+            contact_ids_from_search = list(dict.fromkeys(str(hc.get("id")) for hc in c_results if hc.get("id")))
+            company_by_contact: dict[str, tuple[str, str]] = {}  # contact_id -> (company_name, company_id)
+            if contact_ids_from_search:
+                try:
+                    contact_to_company = hubspot.batch_read_contact_company_ids(contact_ids_from_search)
+                    unique_company_ids = list(dict.fromkeys(contact_to_company.values()))
+                    if unique_company_ids:
+                        companies_batch = hubspot.get_companies_batch(unique_company_ids, properties=["name"])
+                        company_name_by_id = {}
+                        for co in companies_batch:
+                            cid = str(co.get("id") or "")
+                            props = co.get("properties") or {}
+                            company_name_by_id[cid] = props.get("name") or cid
+                        for cid, co_id in contact_to_company.items():
+                            company_by_contact[cid] = (company_name_by_id.get(co_id) or co_id, co_id)
+                except HubSpotServiceError:
+                    pass
             for hc in c_results:
-                cid = hc.get("id") or ""
-                if cid and cid not in seen:
-                    seen.add(cid)
+                cid = hc.get("id")
+                if cid is None:
+                    continue
+                cid_str = str(cid)
+                if cid_str in seen:
+                    continue
+                seen.add(cid_str)
+                name_company = company_by_contact.get(cid_str)
+                if name_company:
+                    cname, coid = name_company
+                    out_contacts.append(_hubspot_contact_to_contact(hc, company_name=cname, company_id=coid))
+                else:
                     out_contacts.append(_hubspot_contact_to_contact(hc))
             if c_results:
                 await supabase.upsert_contacts_cache_bulk(user_id, c_results)
@@ -190,9 +268,8 @@ async def search_contacts(
         try:
             co_result = hubspot.search_companies(query=q_trim, limit=20)
             companies = co_result.get("results") or []
-            # company id -> name
-            company_names: dict[str, str] = {}
-            contact_ids_by_company: list[tuple[str, str]] = []  # (contact_id, company_name)
+            # (contact_id, company_name, company_id)
+            contact_ids_by_company: list[tuple[str, str, str]] = []
             for co in companies:
                 coid = co.get("id")
                 if not coid:
@@ -200,29 +277,34 @@ async def search_contacts(
                 coid = str(coid)
                 props = co.get("properties") or {}
                 cname = props.get("name") or coid
-                company_names[coid] = cname
                 try:
                     cids = hubspot.get_company_contact_ids(coid)
                     for cid in cids:
                         if cid not in seen:
                             seen.add(cid)
-                            contact_ids_by_company.append((cid, cname))
+                            contact_ids_by_company.append((cid, cname, coid))
                 except HubSpotServiceError as ae:
                     logger.debug("Associations for company %s: %s", coid, ae.message)
 
             if contact_ids_by_company:
-                ids_to_fetch = [cid for cid, _ in contact_ids_by_company]
+                ids_to_fetch = [t[0] for t in contact_ids_by_company]
                 batch = hubspot.get_contacts_batch(
                     ids_to_fetch[:100],
                     properties=["firstname", "lastname", "email", "phone", "mobilephone", "jobtitle", "relationship_status", "notes"],
                 )
-                name_by_id = {cid: cname for cid, cname in contact_ids_by_company}
+                name_and_company_by_id = {t[0]: (t[1], t[2]) for t in contact_ids_by_company}
                 for hc in batch:
                     cid = str(hc.get("id") or "")
                     if not cid:
                         continue
-                    cname = name_by_id.get(cid)
-                    out_contacts.append(_hubspot_contact_to_contact(hc, company_name=cname))
+                    name_company = name_and_company_by_id.get(cid)
+                    if name_company:
+                        cname, coid = name_company
+                        out_contacts.append(
+                            _hubspot_contact_to_contact(hc, company_name=cname, company_id=coid)
+                        )
+                    else:
+                        out_contacts.append(_hubspot_contact_to_contact(hc))
                 if batch:
                     await supabase.upsert_contacts_cache_bulk(user_id, batch)
         except HubSpotServiceError as ce:
@@ -271,11 +353,13 @@ async def get_contact(
         await supabase.upsert_contact_cache(user_id, contact_id, contact_data)
 
         company_name: str | None = None
+        company_id: str | None = None
         try:
             company_ids = hubspot.get_contact_company_ids(contact_id)
             if company_ids:
+                company_id = company_ids[0]
                 company_data = hubspot.get_company(
-                    company_ids[0],
+                    company_id,
                     properties=["name"],
                 )
                 props = company_data.get("properties") or {}
@@ -283,7 +367,9 @@ async def get_contact(
         except HubSpotServiceError as ce:
             logger.debug("Contact company lookup for %s: %s", contact_id, ce.message)
 
-        return _hubspot_contact_to_contact(contact_data, company_name=company_name)
+        return _hubspot_contact_to_contact(
+            contact_data, company_name=company_name, company_id=company_id
+        )
     except HubSpotServiceError as e:
         if e.status_code == 404:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contact not found")

@@ -166,3 +166,62 @@ export interface ContactUpdate {
   relationship_status?: string | null;
   notes?: string | null;
 }
+
+// -----------------------------------------------------------------------------
+// Activity page: process notes & submit (POST /api/v1/activities/{id}/...)
+// -----------------------------------------------------------------------------
+
+export interface ProcessNotesRequest {
+  note_text: string;
+}
+
+export interface RecognisedDateOut {
+  date: string | null;
+  label: string | null;
+  confidence: number;
+}
+
+export interface RecommendedTouchDateOut {
+  date: string;
+  label: string;
+  rationale: string;
+}
+
+export interface ExtractedMetadataOut {
+  subject: string;
+  next_steps: string;
+  questions_raised: string;
+  urgency: 'low' | 'medium' | 'high';
+  subject_confidence: number;
+  next_steps_confidence: number;
+  questions_confidence: number;
+}
+
+export interface DraftOut {
+  text: string;
+  confidence: number;
+}
+
+export interface ProcessNotesResponse {
+  summary: string;
+  recognised_date: RecognisedDateOut;
+  recommended_touch_date: RecommendedTouchDateOut | null;
+  metadata: ExtractedMetadataOut;
+  drafts: Record<string, DraftOut>;
+}
+
+export interface ActivitySubmitRequest {
+  mark_complete?: boolean;
+  meeting_notes?: string | null;
+  activity_date?: string | null; // YYYY-MM-DD; date task was performed (used for note prefix)
+  due_date?: string | null;
+  subject?: string | null;
+  contact_id?: string | null;
+  company_id?: string | null;
+}
+
+export interface RegenerateDraftRequest {
+  tone: string;
+  current_note: string;
+  previous_notes: string;
+}
