@@ -27,6 +27,15 @@ import {
   ToastClose,
 } from '@/components/ui/toast';
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from '@/components/ui/dialog';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import {
   getContacts,
   createContact,
   updateContact,
@@ -174,12 +183,11 @@ function DebouncedAutocomplete<T extends { id: string }>({
 // Contact tab
 // ---------------------------------------------------------------------------
 
+const CONTACTS_QUERY_KEY = 'contacts';
+
 function ContactTabContent(): React.ReactElement {
-  const [contacts, setContacts] = React.useState<ApiContact[]>([]);
-  const [isContactsLoading, setIsContactsLoading] = React.useState(true);
-  const [contactError, setContactError] = React.useState<string | null>(null);
+  const queryClient = useQueryClient();
   const [searchInput, setSearchInput] = React.useState('');
-  const [isSearching, setIsSearching] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [firstName, setFirstName] = React.useState('');
   const [lastName, setLastName] = React.useState('');
@@ -193,6 +201,7 @@ function ContactTabContent(): React.ReactElement {
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [contactSubmitLoading, setContactSubmitLoading] = React.useState(false);
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
+  const [editDialogOpen, setEditDialogOpen] = React.useState(false);
   const [toast, setToast] = React.useState<{
     open: boolean;
     variant: 'success' | 'error' | 'default';
@@ -204,58 +213,33 @@ function ContactTabContent(): React.ReactElement {
     setToast({ open: true, variant, title, description });
   };
 
-  const fetchContacts = React.useCallback(async (search?: string) => {
-    try {
-      const res = await getContacts(search);
-      setContacts(res.contacts ?? []);
-      setContactError(null);
-    } catch (err) {
-      setContactError(err instanceof Error ? err.message : 'Failed to load contacts');
-      setContacts([]);
-      showToast('error', 'Failed to load contacts', err instanceof Error ? err.message : 'Try again.');
-    } finally {
-      setIsContactsLoading(false);
-      setIsSearching(false);
+  const debouncedSearch = useDebouncedValue(searchInput.trim(), 400);
+
+  const contactsQuery = useQuery({
+    queryKey: [CONTACTS_QUERY_KEY, debouncedSearch],
+    queryFn: async () => {
+      if (debouncedSearch) return searchContacts(debouncedSearch);
+      const res = await getContacts();
+      return res.contacts ?? [];
+    },
+  });
+
+  const contacts = React.useMemo(() => contactsQuery.data ?? [], [contactsQuery.data]);
+  const isContactsLoading = contactsQuery.isLoading;
+  const isSearching = contactsQuery.isFetching && !!debouncedSearch;
+  const contactError = contactsQuery.isError && contactsQuery.error
+    ? (contactsQuery.error instanceof Error ? contactsQuery.error.message : 'Failed to load contacts')
+    : null;
+
+  React.useEffect(() => {
+    if (contactsQuery.isError && contactsQuery.error) {
+      showToast('error', 'Failed to load contacts', contactsQuery.error instanceof Error ? contactsQuery.error.message : 'Try again.');
     }
-  }, []);
+  }, [contactsQuery.isError, contactsQuery.error]);
 
   const refreshContactList = React.useCallback(async () => {
-    const q = searchInput.trim();
-    if (q) {
-      try {
-        const list = await searchContacts(q);
-        setContacts(list);
-        setContactError(null);
-      } catch {
-        await fetchContacts();
-      }
-    } else {
-      await fetchContacts();
-    }
-  }, [searchInput, fetchContacts]);
-
-  React.useEffect(() => {
-    setIsContactsLoading(true);
-    fetchContacts();
-  }, [fetchContacts]);
-
-  const debouncedSearch = useDebouncedValue(searchInput.trim(), 400);
-  React.useEffect(() => {
-    if (!debouncedSearch) {
-      fetchContacts();
-      return;
-    }
-    setIsSearching(true);
-    searchContacts(debouncedSearch)
-      .then((list) => {
-        setContacts(list);
-        setContactError(null);
-      })
-      .catch((err) => {
-        showToast('error', 'Search failed', err instanceof Error ? err.message : 'Try again.');
-      })
-      .finally(() => setIsSearching(false));
-  }, [debouncedSearch, fetchContacts]);
+    await queryClient.invalidateQueries({ queryKey: [CONTACTS_QUERY_KEY] });
+  }, [queryClient]);
 
   const resetContactForm = () => {
     setEditingId(null);
@@ -276,16 +260,32 @@ function ContactTabContent(): React.ReactElement {
     setFirstName(c.first_name ?? '');
     setLastName(c.last_name ?? '');
     setEmail(c.email ?? '');
-    setPhone('');
-    setJobTitle('');
-    setAccountId('');
+    setPhone(c.phone ?? '');
+    setJobTitle(c.job_title ?? '');
+    setAccountId(c.company_id ?? '');
     setAccountSearchDisplay('');
-    setRelationshipStatus('');
-    setNotes('');
+    setRelationshipStatus(c.relationship_status ?? '');
+    setNotes(c.notes ?? '');
     setErrors({});
   };
 
-  const handleContactSubmit = async (e: React.FormEvent, _linkToActivity: boolean, addAnother: boolean) => {
+  const openEditDialog = async (c: ApiContact) => {
+    loadContactIntoForm(c);
+    setEditDialogOpen(true);
+  };
+
+  const closeEditDialog = () => {
+    setEditDialogOpen(false);
+    setEditingId(null);
+    resetContactForm();
+  };
+
+  const handleContactSubmit = async (
+    e: React.FormEvent,
+    _linkToActivity: boolean,
+    addAnother: boolean,
+    onEditSuccess?: () => void
+  ) => {
     e.preventDefault();
     const next: Record<string, string> = {};
     if (!firstName.trim()) next.firstName = 'First name is required';
@@ -309,6 +309,10 @@ function ContactTabContent(): React.ReactElement {
           notes: notes.trim() || null,
         });
         showToast('success', 'Contact updated');
+        await refreshContactList();
+        resetContactForm();
+        setEditingId(null);
+        onEditSuccess?.();
       } else {
         await createContact({
           first_name: firstName.trim(),
@@ -321,10 +325,10 @@ function ContactTabContent(): React.ReactElement {
           notes: notes.trim() || null,
         });
         showToast('success', 'Contact created', addAnother ? 'Add another below.' : undefined);
+        await refreshContactList();
+        resetContactForm();
+        if (!addAnother) setEditingId(null);
       }
-      await refreshContactList();
-      resetContactForm();
-      if (!addAnother && editingId) setEditingId(null);
     } catch (err) {
       showToast(
         'error',
@@ -342,7 +346,7 @@ function ContactTabContent(): React.ReactElement {
       await deleteContact(id);
       showToast('success', 'Contact deleted');
       await refreshContactList();
-      if (editingId === id) resetContactForm();
+      if (editingId === id) closeEditDialog();
     } catch (err) {
       showToast('error', 'Failed to delete contact', err instanceof Error ? err.message : 'Try again.');
     } finally {
@@ -390,65 +394,222 @@ function ContactTabContent(): React.ReactElement {
           </CardContent>
         </Card>
       ) : contacts.length > 0 ? (
-        <Card>
-          <CardHeader>
+        <Card className="flex flex-col min-h-0">
+          <CardHeader className="shrink-0">
             <CardTitle className="text-base">Contacts</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">
+              Scroll to browse. Search by name or email above. Edit or delete from the list.
+            </p>
           </CardHeader>
-          <CardContent>
-            <ul className="divide-y divide-border">
-              {contacts.map((c) => (
-                <li
-                  key={c.id}
-                  className="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0"
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium truncate">
-                      {[c.first_name, c.last_name].filter(Boolean).join(' ') || 'Unnamed'}
-                    </p>
-                    <p className="text-sm text-muted-foreground truncate">{c.email ?? '—'}</p>
-                  </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 w-8 p-0"
-                      onClick={() => loadContactIntoForm(c)}
-                      disabled={contactSubmitLoading}
-                      aria-label={`Edit ${c.first_name ?? ''} ${c.last_name ?? ''}`}
-                    >
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 w-8 p-0 text-status-at-risk hover:text-status-at-risk"
-                      onClick={() => handleDelete(c.id)}
-                      disabled={deletingId !== null}
-                      aria-label={`Delete ${c.first_name ?? ''} ${c.last_name ?? ''}`}
-                    >
-                      {deletingId === c.id ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="h-4 w-4" />
-                      )}
-                    </Button>
-                  </div>
-                </li>
-              ))}
-            </ul>
+          <CardContent className="p-0 flex flex-col min-h-0">
+            <div
+              className="overflow-y-auto overscroll-contain border-t border-border"
+              style={{ maxHeight: 'min(420px, 50vh)' }}
+              aria-label="Contacts list"
+            >
+              <ul className="divide-y divide-border">
+                {contacts.map((c) => (
+                  <li
+                    key={c.id}
+                    className="flex items-center justify-between gap-4 py-3 px-4 first:pt-3"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium truncate">
+                        {[c.first_name, c.last_name].filter(Boolean).join(' ') || 'Unnamed'}
+                      </p>
+                      <p className="text-sm text-muted-foreground truncate">{c.email ?? '—'}</p>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0"
+                        onClick={() => openEditDialog(c)}
+                        disabled={contactSubmitLoading}
+                        aria-label={`Edit ${c.first_name ?? ''} ${c.last_name ?? ''}`}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0 text-status-at-risk hover:text-status-at-risk"
+                        onClick={() => handleDelete(c.id)}
+                        disabled={deletingId !== null}
+                        aria-label={`Delete ${c.first_name ?? ''} ${c.last_name ?? ''}`}
+                      >
+                        {deletingId === c.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
           </CardContent>
         </Card>
       ) : null}
 
+      {/* Edit Contact Dialog */}
+      <Dialog open={editDialogOpen} onOpenChange={(open) => !open && closeEditDialog()}>
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto" showClose={true}>
+          <DialogHeader>
+            <DialogTitle>Edit contact</DialogTitle>
+            <DialogDescription>
+              Update details below. Changes are saved to HubSpot when you click Save.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleContactSubmit(e, false, false, () => setEditDialogOpen(false));
+            }}
+            className="space-y-4"
+          >
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="edit-firstName">First Name *</Label>
+                <Input
+                  id="edit-firstName"
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  className="mt-1"
+                  error={!!errors.firstName}
+                />
+                {errors.firstName && (
+                  <p className="text-xs text-status-at-risk mt-1">{errors.firstName}</p>
+                )}
+              </div>
+              <div>
+                <Label htmlFor="edit-lastName">Last Name *</Label>
+                <Input
+                  id="edit-lastName"
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                  className="mt-1"
+                  error={!!errors.lastName}
+                />
+                {errors.lastName && (
+                  <p className="text-xs text-status-at-risk mt-1">{errors.lastName}</p>
+                )}
+              </div>
+            </div>
+            <div>
+              <Label htmlFor="edit-email">Email *</Label>
+              <Input
+                id="edit-email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="mt-1"
+                error={!!errors.email}
+              />
+              {errors.email && (
+                <p className="text-xs text-status-at-risk mt-1">{errors.email}</p>
+              )}
+            </div>
+            <div>
+              <Label htmlFor="edit-phone">Phone</Label>
+              <Input
+                id="edit-phone"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                className="mt-1"
+                error={!!errors.phone}
+              />
+              {errors.phone && (
+                <p className="text-xs text-status-at-risk mt-1">{errors.phone}</p>
+              )}
+            </div>
+            <div>
+              <Label htmlFor="edit-jobTitle">Job Title</Label>
+              <Input
+                id="edit-jobTitle"
+                value={jobTitle}
+                onChange={(e) => setJobTitle(e.target.value)}
+                className="mt-1"
+              />
+            </div>
+            <div>
+              <Label>Account</Label>
+              <DebouncedAutocomplete
+                value={accountSearchDisplay || MOCK_ACCOUNTS.find((a) => a.id === accountId)?.name || ''}
+                onChange={(v) => {
+                  setAccountSearchDisplay(v);
+                  const acc = MOCK_ACCOUNTS.find((a) => a.name === v);
+                  setAccountId(acc?.id ?? '');
+                }}
+                placeholder="Search accounts..."
+                options={MOCK_ACCOUNTS}
+                getOptionLabel={(a) => a.name}
+                onSelect={(a) => {
+                  setAccountId(a.id);
+                  setAccountSearchDisplay(a.name);
+                }}
+                className="mt-1"
+              />
+            </div>
+            <div>
+              <Label>Relationship Status</Label>
+              <Select value={relationshipStatus} onValueChange={setRelationshipStatus}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder="Select status" />
+                </SelectTrigger>
+                <SelectContent>
+                  {RELATIONSHIP_OPTIONS.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      <span className="flex items-center gap-2">
+                        <StatusChip status={s} size="sm" />
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="edit-notes">Notes</Label>
+              <Textarea
+                id="edit-notes"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                className="mt-1 min-h-[80px]"
+                placeholder="Add notes..."
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={closeEditDialog}
+                disabled={contactSubmitLoading}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={contactSubmitLoading}>
+                {contactSubmitLoading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : null}
+                Save changes
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {!editingId && (
       <div>
-        {/* Contact Form */}
+        {/* Add contact form */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">
-              {editingId ? 'Edit contact' : 'Contact details'}
-            </CardTitle>
+            <CardTitle className="text-base">Add contact</CardTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              Create a new contact. It will be added to HubSpot.
+            </p>
           </CardHeader>
           <CardContent>
             <form onSubmit={(e) => { e.preventDefault(); }} className="space-y-4">
@@ -563,55 +724,31 @@ function ContactTabContent(): React.ReactElement {
                 />
               </div>
               <div className="flex flex-wrap gap-2 pt-2">
-                {editingId ? (
-                  <>
-                    <Button
-                      type="button"
-                      onClick={(e) => handleContactSubmit(e, false, false)}
-                      disabled={contactSubmitLoading}
-                    >
-                      {contactSubmitLoading ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : null}
-                      Update Contact
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={resetContactForm}
-                      disabled={contactSubmitLoading}
-                    >
-                      Cancel
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      onClick={(e) => handleContactSubmit(e, false, false)}
-                      disabled={contactSubmitLoading}
-                    >
-                      {contactSubmitLoading ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : null}
-                      Create Contact
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={(e) => handleContactSubmit(e, false, true)}
-                      disabled={contactSubmitLoading}
-                    >
-                      Create & Add Another
-                    </Button>
-                  </>
-                )}
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={(e) => handleContactSubmit(e, false, false)}
+                  disabled={contactSubmitLoading}
+                >
+                  {contactSubmitLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : null}
+                  Create Contact
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={(e) => handleContactSubmit(e, false, true)}
+                  disabled={contactSubmitLoading}
+                >
+                  Create & Add Another
+                </Button>
               </div>
             </form>
           </CardContent>
         </Card>
       </div>
+      )}
 
       <Toast
         open={toast.open}

@@ -9,8 +9,9 @@ pydantic==2.6.1
 pydantic-settings==2.1.0
 email-validator
 
-# Supabase
-supabase==2.3.4
+# Supabase (pin httpx to avoid Client.__init__() "proxy" / "socket_options" errors)
+supabase>=2.10.0,<3
+httpx>=0.26.0,<0.28
 
 # Environment
 python-dotenv==1.0.1

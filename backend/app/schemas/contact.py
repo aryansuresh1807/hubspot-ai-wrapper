@@ -13,6 +13,10 @@ class ContactBase(BaseModel):
     last_name: str | None = None
     company_id: str | None = None
     hubspot_id: str | None = None
+    phone: str | None = None
+    job_title: str | None = None
+    relationship_status: str | None = None
+    notes: str | None = None
 
 
 class Contact(ContactBase):

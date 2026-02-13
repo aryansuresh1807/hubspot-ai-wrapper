@@ -40,13 +40,23 @@ HS_PRIORITY = "hs_task_priority"
 HS_TYPE = "hs_task_type"
 
 
-def _parse_ts(ms: str | int | None) -> datetime | None:
-    """Parse HubSpot timestamp (ms since epoch) to datetime."""
-    if ms is None:
+def _parse_ts(value: str | int | None) -> datetime | None:
+    """Parse HubSpot timestamp: milliseconds since epoch or ISO 8601 string."""
+    if value is None:
         return None
     try:
-        if isinstance(ms, str):
-            ms = int(ms)
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                return None
+            # ISO 8601 (e.g. "2026-02-11T19:00:00.000Z")
+            if value[0:1].isdigit() and ("T" in value or "-" in value):
+                dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+            # Milliseconds as string
+            ms = int(value)
+        else:
+            ms = int(value)
         return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc)
     except (ValueError, TypeError):
         return None
@@ -148,18 +158,24 @@ def _apply_sort(activities: list[dict[str, Any]], sort: ActivitySortOption) -> l
     return sorted(activities, key=sort_key)
 
 
+def _contact_dict_to_info(c: dict[str, Any]) -> ContactInfo:
+    """Build ContactInfo from HubSpot contact dict (properties may be nested)."""
+    props = c.get("properties") or c
+    return ContactInfo(
+        id=str(c.get("id", "")),
+        email=props.get("email"),
+        first_name=props.get("firstname"),
+        last_name=props.get("lastname"),
+        hubspot_id=str(c.get("id", "")),
+    )
+
+
 def _activity_dict_to_response(a: dict[str, Any]) -> ActivityResponse:
     """Build ActivityResponse from our internal activity dict (strip _raw, _priority)."""
     contacts: list[ContactInfo] = []
     for c in a.get("contacts") or []:
-        if isinstance(c, dict) and c.get("id"):
-            contacts.append(ContactInfo(
-                id=c["id"],
-                email=c.get("email"),
-                first_name=c.get("first_name"),
-                last_name=c.get("last_name"),
-                hubspot_id=c.get("hubspot_id"),
-            ))
+        if isinstance(c, dict) and (c.get("id") or c.get("properties")):
+            contacts.append(_contact_dict_to_info(c))
     companies: list[CompanyInfo] = []
     for c in a.get("companies") or []:
         if isinstance(c, dict) and c.get("id"):
@@ -186,15 +202,20 @@ def _activity_dict_to_response(a: dict[str, Any]) -> ActivityResponse:
     )
 
 
+def _today_yyyymmdd() -> str:
+    """Return today's date as YYYY-MM-DD in UTC."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
 @router.get(
     "/",
     response_model=ActivityListResponse,
     summary="List activities",
-    description="List activities with optional filters and sort. Uses cache if fresh (5 min), else syncs from HubSpot.",
+    description="List activities with optional filters and sort. Uses cache if fresh (5 min), else syncs from HubSpot. Default date filter is today.",
 )
 async def list_activities(
     user_id: str = Depends(get_current_user_id),
-    date: str | None = Query(None, description="Filter by date (YYYY-MM-DD)"),
+    date: str | None = Query(None, description="Filter by date (YYYY-MM-DD); default today"),
     relationship_status: list[str] | None = Query(None, description="Filter by relationship status"),
     processing_status: list[str] | None = Query(None, description="Filter by processing status"),
     date_from: str | None = Query(None, description="Start date for range (YYYY-MM-DD)"),
@@ -203,7 +224,12 @@ async def list_activities(
     supabase: SupabaseService = Depends(get_supabase_service),
     hubspot: HubSpotService = Depends(get_hubspot_service),
 ) -> ActivityListResponse:
-    """GET /api/v1/activities/ — list activities with cache and filters."""
+    """GET /api/v1/activities/ — list activities with cache and filters. Default: tasks due today."""
+    # Default date filter to today when no range specified (dashboard "today's tasks" view)
+    effective_date = date
+    if effective_date is None and date_from is None and date_to is None:
+        effective_date = _today_yyyymmdd()
+
     try:
         # a) Check cache freshness
         last_synced = await supabase.get_tasks_cache_freshness(user_id)
@@ -221,12 +247,16 @@ async def list_activities(
             except (ValueError, TypeError):
                 pass
 
-        # b) If stale, fetch from HubSpot and store in cache
+        # b) If stale, fetch from HubSpot with associations and store in cache
         if not fresh:
             all_tasks: list[dict[str, Any]] = []
             after: str | None = None
             while True:
-                resp = hubspot.get_tasks(limit=100, after=after)
+                resp = hubspot.get_tasks(
+                    limit=100,
+                    after=after,
+                    associations=["contacts", "companies"],
+                )
                 results = resp.get("results") or []
                 all_tasks.extend(results)
                 paging = resp.get("paging") or {}
@@ -244,16 +274,28 @@ async def list_activities(
             data = row.get("data") or {}
             activities.append(_hubspot_task_to_activity(data))
 
-        # If we never had cache and didn't get tasks (e.g. no HubSpot token), use empty list
-        # e) Apply filters
+        # d) Apply filters (with default today)
         activities = _apply_filters(
             activities,
-            date=date,
+            date=effective_date,
             relationship_status=relationship_status,
             processing_status=processing_status,
             date_from=date_from,
             date_to=date_to,
         )
+        # e) Enrich with contact details for contact_ids
+        all_contact_ids = list({cid for a in activities for cid in (a.get("contact_ids") or [])})
+        if all_contact_ids:
+            try:
+                contact_list = hubspot.get_contacts_batch(all_contact_ids)
+                contact_map = {str(c.get("id", "")): c for c in contact_list if c.get("id")}
+                for a in activities:
+                    a["contacts"] = [
+                        contact_map[cid] for cid in (a.get("contact_ids") or []) if cid in contact_map
+                    ]
+            except HubSpotServiceError:
+                pass  # keep contacts empty if batch fails
+
         # f) Sort
         activities = _apply_sort(activities, sort)
 
@@ -266,7 +308,7 @@ async def list_activities(
         # Return from cache only if HubSpot failed
         cached = await supabase.get_tasks_cache(user_id)
         activities = [_hubspot_task_to_activity(row.get("data") or {}) for row in cached]
-        activities = _apply_filters(activities, date, relationship_status, processing_status, date_from, date_to)
+        activities = _apply_filters(activities, effective_date, relationship_status, processing_status, date_from, date_to)
         activities = _apply_sort(activities, sort)
         return ActivityListResponse(activities=[_activity_dict_to_response(a) for a in activities])
     except HTTPException:
@@ -294,7 +336,11 @@ async def sync_activities(
         all_tasks: list[dict[str, Any]] = []
         after: str | None = None
         while True:
-            resp = hubspot.get_tasks(limit=100, after=after)
+            resp = hubspot.get_tasks(
+                limit=100,
+                after=after,
+                associations=["contacts", "companies"],
+            )
             results = resp.get("results") or []
             all_tasks.extend(results)
             paging = resp.get("paging") or {}
@@ -334,18 +380,32 @@ async def get_activity(
     supabase: SupabaseService = Depends(get_supabase_service),
     hubspot: HubSpotService = Depends(get_hubspot_service),
 ) -> ActivityResponse:
-    """GET /api/v1/activities/{activity_id} — fetch from cache or HubSpot."""
+    """GET /api/v1/activities/{activity_id} — fetch from cache or HubSpot. Returns task with contact summary and notes (communication history)."""
     try:
         cached = await supabase.get_tasks_cache(user_id)
         for row in cached:
             if (row.get("hubspot_task_id") or row.get("data", {}).get("id")) == activity_id:
                 data = row.get("data") or {}
                 a = _hubspot_task_to_activity(data)
+                # Enrich with contact details for contact summary
+                contact_ids = a.get("contact_ids") or []
+                if contact_ids:
+                    try:
+                        contact_list = hubspot.get_contacts_batch(contact_ids)
+                        a["contacts"] = contact_list
+                    except HubSpotServiceError:
+                        pass
                 return _activity_dict_to_response(a)
-        # Not in cache: fetch from HubSpot
-        task = hubspot.get_task(activity_id)
+        # Not in cache: fetch from HubSpot with associations
+        task = hubspot.get_task(activity_id, associations=["contacts", "companies"])
         await supabase.upsert_task_cache(user_id, activity_id, task)
         a = _hubspot_task_to_activity(task)
+        contact_ids = a.get("contact_ids") or []
+        if contact_ids:
+            try:
+                a["contacts"] = hubspot.get_contacts_batch(contact_ids)
+            except HubSpotServiceError:
+                pass
         return _activity_dict_to_response(a)
     except HubSpotServiceError as e:
         if e.status_code == 404:

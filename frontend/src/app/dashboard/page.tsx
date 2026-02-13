@@ -60,6 +60,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   getActivities,
   completeActivity,
@@ -323,6 +324,12 @@ const DEFAULT_FILTER: FilterState = {
   dateTo: '',
 };
 
+/** Today as YYYY-MM-DD (local date) for default activity list filter. */
+function getTodayDateString(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 // ---------------------------------------------------------------------------
 // Skeleton & Empty state
 // ---------------------------------------------------------------------------
@@ -403,19 +410,19 @@ function ContactPreviewSkeleton() {
 // Page
 // ---------------------------------------------------------------------------
 
+const ACTIVITIES_QUERY_KEY = 'activities';
+const DASHBOARD_STATE_QUERY_KEY = 'dashboardState';
+
 export default function DashboardPage(): React.ReactElement {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { user } = useAuth() as { user: unknown };
-  const [activities, setActivities] = React.useState<DashboardActivityItem[]>([]);
   const [selectedActivityId, setSelectedActivityId] = React.useState<string | null>(null);
   const [sort, setSort] = React.useState<SortOption>('date_newest');
   const [filterDialogOpen, setFilterDialogOpen] = React.useState(false);
   const [filterDraft, setFilterDraft] = React.useState<FilterState>(DEFAULT_FILTER);
   const [filterApplied, setFilterApplied] = React.useState<FilterState>(DEFAULT_FILTER);
-  const [datePickerValue, setDatePickerValue] = React.useState<string>('');
-  const [completedIds, setCompletedIds] = React.useState<Set<string>>(new Set());
-  const [isInitialLoad, setIsInitialLoad] = React.useState(true);
-  const [isActivitiesLoading, setIsActivitiesLoading] = React.useState(false);
+  const [datePickerValue, setDatePickerValue] = React.useState<string>(getTodayDateString);
   const [completingId, setCompletingId] = React.useState<string | null>(null);
   const [cloningId, setCloningId] = React.useState<string | null>(null);
   const [isSyncing, setIsSyncing] = React.useState(false);
@@ -427,6 +434,7 @@ export default function DashboardPage(): React.ReactElement {
     title: '',
     description: undefined,
   });
+  const hasSyncedStateFromServer = React.useRef(false);
 
   const showToast = React.useCallback(
     (variant: ToastState['variant'], title: string, description?: string) => {
@@ -435,121 +443,89 @@ export default function DashboardPage(): React.ReactElement {
     []
   );
 
-  // Load dashboard state and activities on mount (when user is ready)
-  React.useEffect(() => {
-    if (!user) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const dashboardState = await getDashboardState().catch(() => null);
-        if (cancelled) return;
-        if (dashboardState) {
-          setSort((dashboardState.sort_option as SortOption) || 'date_newest');
-          const filter = filterStateFromApi(dashboardState.filter_state as Record<string, unknown>);
-          setFilterApplied(filter);
-          setFilterDraft(filter);
-          setDatePickerValue(dashboardState.date_picker_value ?? '');
-          if (dashboardState.selected_activity_id)
-            setSelectedActivityId(dashboardState.selected_activity_id);
-        }
-        setIsActivitiesLoading(true);
-        const fs = dashboardState?.filter_state as Record<string, unknown> | undefined;
-        const params = {
-          sort: (dashboardState?.sort_option as ActivitySortOption) || 'date_newest',
-          date: dashboardState?.date_picker_value ?? undefined,
-          date_from: fs?.dateFrom as string | undefined,
-          date_to: fs?.dateTo as string | undefined,
-          relationship_status: fs?.relationshipStatus as string[] | undefined,
-          processing_status: fs?.processingStatus as string[] | undefined,
-        };
-        const res = await getActivities(params);
-        if (cancelled) return;
-        setActivities(res.activities.map(apiActivityToDashboardItem));
-        setCompletedIds((prev) => {
-          const next = new Set(prev);
-          res.activities.filter((a) => a.completed).forEach((a) => next.add(a.id));
-          return next;
-        });
-        setIsOffline(false);
-        setLastSyncedAt(Date.now());
-        if (dashboardState?.selected_activity_id && res.activities.some((a) => a.id === dashboardState.selected_activity_id)) {
-          setSelectedActivityId(dashboardState.selected_activity_id);
-        } else if (res.activities.length > 0) {
-          setSelectedActivityId(res.activities[0].id);
-        }
-        prevParamsRef.current = JSON.stringify({
-          sort: (dashboardState?.sort_option as SortOption) || 'date_newest',
-          date: dashboardState?.date_picker_value ?? undefined,
-          date_from: fs?.dateFrom,
-          date_to: fs?.dateTo,
-          relationship_status: fs?.relationshipStatus,
-          processing_status: fs?.processingStatus,
-        });
-      } catch (err) {
-        if (!cancelled) {
-          if (isNetworkError(err)) setIsOffline(true);
-          showToast('error', 'Failed to load dashboard', err instanceof Error ? err.message : 'Please try again.');
-        }
-      } finally {
-        if (!cancelled) {
-          setIsInitialLoad(false);
-          setIsActivitiesLoading(false);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [user]);
+  // Dashboard state from API (cached by React Query – instant when navigating back)
+  const dashboardStateQuery = useQuery({
+    queryKey: [DASHBOARD_STATE_QUERY_KEY],
+    queryFn: getDashboardState,
+    enabled: !!user,
+    retry: false,
+  });
 
-  // When filters/sort/date change, refetch activities
-  const prevParamsRef = React.useRef<string>('');
+  // Sync local UI state from server/cache once when dashboard state is available
   React.useEffect(() => {
-    if (!user || isInitialLoad) return;
-    const paramsKey = JSON.stringify({
-      sort,
-      date: datePickerValue || undefined,
-      date_from: filterApplied.dateFrom || undefined,
-      date_to: filterApplied.dateTo || undefined,
-      relationship_status: filterApplied.relationshipStatus,
-      processing_status: filterApplied.processingStatus,
-    });
-    if (paramsKey === prevParamsRef.current) return;
-    prevParamsRef.current = paramsKey;
-    let cancelled = false;
-    setIsActivitiesLoading(true);
-    getActivities({
+    const state = dashboardStateQuery.data;
+    if (!state || hasSyncedStateFromServer.current) return;
+    hasSyncedStateFromServer.current = true;
+    setSort((state.sort_option as SortOption) || 'date_newest');
+    const filter = filterStateFromApi(state.filter_state as Record<string, unknown>);
+    setFilterApplied(filter);
+    setFilterDraft(filter);
+    setDatePickerValue(state.date_picker_value ?? getTodayDateString());
+    if (state.selected_activity_id) setSelectedActivityId(state.selected_activity_id);
+  }, [dashboardStateQuery.data]);
+
+  // Activities from API (cached by React Query – instant when navigating back)
+  const activitiesParams = React.useMemo(
+    () => ({
       sort: sort as ActivitySortOption,
       date: datePickerValue || undefined,
       date_from: filterApplied.dateFrom || undefined,
       date_to: filterApplied.dateTo || undefined,
       relationship_status: filterApplied.relationshipStatus.length ? filterApplied.relationshipStatus : undefined,
       processing_status: filterApplied.processingStatus.length ? filterApplied.processingStatus : undefined,
-    })
-      .then((res) => {
-        if (!cancelled) {
-          setIsOffline(false);
-          setActivities(res.activities.map(apiActivityToDashboardItem));
-          setCompletedIds((prev) => {
-            const next = new Set(prev);
-            res.activities.filter((a) => a.completed).forEach((a) => next.add(a.id));
-            return next;
-          });
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          if (isNetworkError(err)) setIsOffline(true);
-          showToast('error', 'Failed to load activities', err instanceof Error ? err.message : 'Try again.');
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setIsActivitiesLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [user, isInitialLoad, sort, filterApplied, datePickerValue, showToast]);
+    }),
+    [sort, datePickerValue, filterApplied]
+  );
+
+  const activitiesQuery = useQuery({
+    queryKey: [ACTIVITIES_QUERY_KEY, activitiesParams],
+    queryFn: () => getActivities(activitiesParams),
+    enabled: !!user && dashboardStateQuery.isFetched,
+  });
+
+  // Derive list and completed set from query data (so UI shows cached data when returning)
+  const activities = React.useMemo(
+    () => (activitiesQuery.data?.activities ?? []).map(apiActivityToDashboardItem),
+    [activitiesQuery.data]
+  );
+  const completedIds = React.useMemo(
+    () => new Set((activitiesQuery.data?.activities ?? []).filter((a) => a.completed).map((a) => a.id)),
+    [activitiesQuery.data]
+  );
+
+  const isInitialLoad = !dashboardStateQuery.isFetched;
+  const isActivitiesLoading = activitiesQuery.isLoading;
+
+  // Set selected activity when activities load and we don't have one
+  React.useEffect(() => {
+    const list = activitiesQuery.data?.activities ?? [];
+    if (list.length === 0) return;
+    if (selectedActivityId && list.some((a) => a.id === selectedActivityId)) return;
+    setSelectedActivityId((id) => (id && list.some((a) => a.id === id)) ? id : list[0].id);
+  }, [activitiesQuery.data, selectedActivityId]);
+
+  // Track last synced and offline from query result
+  React.useEffect(() => {
+    if (activitiesQuery.isSuccess) {
+      setLastSyncedAt(Date.now());
+      setIsOffline(false);
+    }
+  }, [activitiesQuery.isSuccess]);
+  React.useEffect(() => {
+    if (activitiesQuery.isError && isNetworkError(activitiesQuery.error)) setIsOffline(true);
+  }, [activitiesQuery.isError, activitiesQuery.error]);
+
+  // Show error toast when activities query fails
+  React.useEffect(() => {
+    if (activitiesQuery.isError && activitiesQuery.error && !activitiesQuery.data) {
+      showToast('error', 'Failed to load activities', activitiesQuery.error instanceof Error ? activitiesQuery.error.message : 'Try again.');
+    }
+  }, [activitiesQuery.isError, activitiesQuery.error, activitiesQuery.data, showToast]);
+  React.useEffect(() => {
+    if (dashboardStateQuery.isError && !dashboardStateQuery.data) {
+      showToast('error', 'Failed to load dashboard', dashboardStateQuery.error instanceof Error ? dashboardStateQuery.error.message : 'Please try again.');
+    }
+  }, [dashboardStateQuery.isError, dashboardStateQuery.error, dashboardStateQuery.data, showToast]);
 
   // Persist dashboard state (debounced) when selection, sort, filter, or date changes
   React.useEffect(() => {
@@ -647,8 +623,7 @@ export default function DashboardPage(): React.ReactElement {
           due_date: activity.lastTouchDate,
           completed: false,
         });
-        const newItem = apiActivityToDashboardItem(created);
-        setActivities((prev) => [newItem, ...prev]);
+        await queryClient.invalidateQueries({ queryKey: [ACTIVITIES_QUERY_KEY] });
         setSelectedActivityId(created.id);
         showToast('success', 'Activity duplicated', 'You can edit the new activity.');
       } catch (err) {
@@ -657,7 +632,7 @@ export default function DashboardPage(): React.ReactElement {
         setCloningId(null);
       }
     },
-    [showToast, isOffline]
+    [showToast, isOffline, queryClient]
   );
 
   const handleComplete = React.useCallback(
@@ -669,11 +644,11 @@ export default function DashboardPage(): React.ReactElement {
       setCompletingId(activity.id);
       try {
         await completeActivity(activity.id);
-        setCompletedIds((prev) => new Set(prev).add(activity.id));
         if (selectedActivityId === activity.id) {
           const next = activities.find((i) => i.activity.id !== activity.id && !completedIds.has(i.activity.id));
           setSelectedActivityId(next?.activity.id ?? null);
         }
+        await queryClient.invalidateQueries({ queryKey: [ACTIVITIES_QUERY_KEY] });
         showToast('success', 'Activity completed', `${activity.subject} marked as complete.`);
       } catch (err) {
         showToast('error', 'Failed to complete activity', err instanceof Error ? err.message : 'Try again.');
@@ -681,7 +656,7 @@ export default function DashboardPage(): React.ReactElement {
         setCompletingId(null);
       }
     },
-    [selectedActivityId, activities, completedIds, showToast, isOffline]
+    [selectedActivityId, activities, completedIds, showToast, isOffline, queryClient]
   );
 
   const handleRefresh = React.useCallback(async () => {
@@ -692,20 +667,7 @@ export default function DashboardPage(): React.ReactElement {
         setIsOffline(false);
         setLastSyncedAt(Date.now());
         showToast('success', 'Sync complete', `${res.tasks_count ?? 0} activities synced from HubSpot.`);
-        const list = await getActivities({
-          sort: sort as ActivitySortOption,
-          date: datePickerValue || undefined,
-          date_from: filterApplied.dateFrom || undefined,
-          date_to: filterApplied.dateTo || undefined,
-          relationship_status: filterApplied.relationshipStatus.length ? filterApplied.relationshipStatus : undefined,
-          processing_status: filterApplied.processingStatus.length ? filterApplied.processingStatus : undefined,
-        });
-        setActivities(list.activities.map(apiActivityToDashboardItem));
-        setCompletedIds((prev) => {
-          const next = new Set(prev);
-          list.activities.filter((a) => a.completed).forEach((a) => next.add(a.id));
-          return next;
-        });
+        await queryClient.invalidateQueries({ queryKey: [ACTIVITIES_QUERY_KEY] });
       } else {
         showToast('warning', 'Sync failed', res.message);
       }
@@ -715,7 +677,7 @@ export default function DashboardPage(): React.ReactElement {
     } finally {
       setIsSyncing(false);
     }
-  }, [sort, datePickerValue, filterApplied, showToast]);
+  }, [showToast, queryClient]);
 
   // Auto-refresh activities every 5 minutes
   React.useEffect(() => {
@@ -999,7 +961,7 @@ export default function DashboardPage(): React.ReactElement {
           </div>
         </section>
 
-        {/* Middle panel - Communication Summary (3 cols on desktop), fixed; scrolls internally if needed */}
+        {/* Middle panel - Communication Summary + Communication history (task notes) */}
         <section className="flex flex-col min-h-0 lg:col-span-3 lg:flex-shrink-0 lg:overflow-hidden">
           <Card className="h-full min-h-0 overflow-hidden flex flex-col">
             <CardHeader className="pb-2 shrink-0">
@@ -1043,6 +1005,15 @@ export default function DashboardPage(): React.ReactElement {
                       {selectedSummary.averageResponseTime}
                     </p>
                   </div>
+                  {/* Communication history: task notes (HubSpot task body) */}
+                  {selectedItem && (selectedItem.activity.noteExcerpt || selectedSummary.keyPoints?.length) ? (
+                    <div>
+                      <h3 className="text-sm font-medium mb-2">Communication history</h3>
+                      <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                        {selectedItem.activity.noteExcerpt || (selectedSummary.keyPoints ?? []).join('\n') || 'No notes saved for this task.'}
+                      </p>
+                    </div>
+                  ) : null}
                   <div>
                     <h3 className="text-sm font-medium mb-2">Key Points</h3>
                     <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground">

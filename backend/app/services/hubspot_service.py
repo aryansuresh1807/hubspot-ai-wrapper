@@ -317,11 +317,23 @@ class HubSpotService:
     # Tasks (activities)
     # -------------------------------------------------------------------------
 
+    TASK_PROPERTIES = [
+        "hs_timestamp",
+        "hs_task_subject",
+        "hs_task_body",
+        "hs_task_status",
+        "hs_task_priority",
+        "hs_task_type",
+        "hs_createdate",
+        "hs_lastmodifieddate",
+    ]
+
     def get_tasks(
         self,
         limit: int = 100,
         after: str | None = None,
         properties: list[str] | None = None,
+        associations: list[str] | None = None,
     ) -> dict[str, Any]:
         """Fetch all tasks from HubSpot. Returns list and pagination info."""
         params: dict[str, Any] = {"limit": min(limit, 100)}
@@ -329,6 +341,10 @@ class HubSpotService:
             params["after"] = after
         if properties:
             params["properties"] = ",".join(properties)
+        else:
+            params["properties"] = ",".join(self.TASK_PROPERTIES)
+        if associations:
+            params["associations"] = ",".join(associations)
         try:
             data = self._request("GET", "/crm/v3/objects/tasks", params=params)
         except HubSpotServiceError:
@@ -337,15 +353,74 @@ class HubSpotService:
             raise HubSpotServiceError(f"Failed to fetch tasks: {e!s}") from e
         return data if isinstance(data, dict) else {"results": data}
 
+    def search_tasks(
+        self,
+        due_date_from_ms: int | None = None,
+        due_date_to_ms: int | None = None,
+        limit: int = 100,
+        after: str | None = None,
+        properties: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Search tasks by due date (hs_timestamp).
+        Use POST /crm/v3/objects/tasks/search with filterGroups.
+        """
+        body: dict[str, Any] = {"limit": min(limit, 100)}
+        if after is not None:
+            body["after"] = after
+        if properties:
+            body["properties"] = properties
+        else:
+            body["properties"] = self.TASK_PROPERTIES.copy()
+
+        filter_groups: list[dict[str, Any]] = []
+        if due_date_from_ms is not None or due_date_to_ms is not None:
+            filters: list[dict[str, Any]] = []
+            if due_date_from_ms is not None:
+                filters.append({
+                    "propertyName": "hs_timestamp",
+                    "operator": "GTE",
+                    "value": str(due_date_from_ms),
+                })
+            if due_date_to_ms is not None:
+                filters.append({
+                    "propertyName": "hs_timestamp",
+                    "operator": "LTE",
+                    "value": str(due_date_to_ms),
+                })
+            if filters:
+                filter_groups.append({"filters": filters})
+        if filter_groups:
+            body["filterGroups"] = filter_groups
+
+        try:
+            data = self._request(
+                "POST",
+                "/crm/v3/objects/tasks/search",
+                json=body,
+            )
+        except HubSpotServiceError:
+            raise
+        except Exception as e:
+            raise HubSpotServiceError(f"Failed to search tasks: {e!s}") from e
+        if not isinstance(data, dict):
+            return {"results": data, "total": len(data) if isinstance(data, list) else 0}
+        return data
+
     def get_task(
         self,
         task_id: str,
         properties: list[str] | None = None,
+        associations: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Fetch a single task by ID."""
+        """Fetch a single task by ID, optionally with associations (e.g. contacts)."""
         params: dict[str, Any] = {}
         if properties:
             params["properties"] = ",".join(properties)
+        else:
+            params["properties"] = ",".join(self.TASK_PROPERTIES)
+        if associations:
+            params["associations"] = ",".join(associations)
         try:
             data = self._request(
                 "GET",
@@ -359,6 +434,35 @@ class HubSpotService:
         if not isinstance(data, dict):
             raise HubSpotServiceError(f"Unexpected response for task {task_id}")
         return data
+
+    def get_contacts_batch(
+        self,
+        contact_ids: list[str],
+        properties: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Batch fetch contacts by IDs. HubSpot batch read up to 100 per request."""
+        if not contact_ids:
+            return []
+        props = properties or ["firstname", "lastname", "email", "phone"]
+        body: dict[str, Any] = {
+            "properties": props,
+            "inputs": [{"id": cid} for cid in contact_ids[:100]],
+        }
+        try:
+            data = self._request(
+                "POST",
+                "/crm/v3/objects/contacts/batch/read",
+                json=body,
+            )
+        except HubSpotServiceError:
+            raise
+        except Exception as e:
+            raise HubSpotServiceError(f"Failed to batch fetch contacts: {e!s}") from e
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict) and "results" in data:
+            return data["results"]
+        return []
 
     def create_task(self, task_data: dict[str, Any]) -> dict[str, Any]:
         """Create a new task. task_data can be {'properties': {...}} or flat properties."""

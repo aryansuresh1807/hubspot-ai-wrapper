@@ -43,6 +43,10 @@ def _hubspot_contact_to_contact(hc: dict[str, Any]) -> Contact:
         first_name=props.get(HS_FIRSTNAME),
         last_name=props.get(HS_LASTNAME),
         company_id=None,  # Would need associations to resolve
+        phone=props.get(HS_PHONE),
+        job_title=props.get(HS_JOBTITLE),
+        relationship_status=props.get("relationship_status"),
+        notes=props.get("notes"),
         created_at=hc.get("createdAt"),
         updated_at=hc.get("updatedAt"),
     )

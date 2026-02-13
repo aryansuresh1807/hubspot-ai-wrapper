@@ -118,8 +118,10 @@ function formatDuration(ms: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// Page
+// Page (cache loaded state across navigation)
 // ---------------------------------------------------------------------------
+
+let integrationsLoadedOnce = false;
 
 function IntegrationTileSkeleton() {
   return (
@@ -140,9 +142,16 @@ function IntegrationTileSkeleton() {
 }
 
 export default function IntegrationsPage(): React.ReactElement {
-  const [tilesLoading, setTilesLoading] = React.useState(true);
+  const [tilesLoading, setTilesLoading] = React.useState(!integrationsLoadedOnce);
   React.useEffect(() => {
-    const t = setTimeout(() => setTilesLoading(false), 600);
+    if (integrationsLoadedOnce) {
+      setTilesLoading(false);
+      return;
+    }
+    const t = setTimeout(() => {
+      integrationsLoadedOnce = true;
+      setTilesLoading(false);
+    }, 600);
     return () => clearTimeout(t);
   }, []);
   const [expandedSettings, setExpandedSettings] = React.useState<IntegrationId | null>(null);

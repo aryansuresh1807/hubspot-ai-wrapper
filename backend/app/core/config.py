@@ -4,10 +4,15 @@ Settings class using pydantic-settings with optional validation.
 """
 
 from functools import lru_cache
+from pathlib import Path
 from typing import List
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Resolve .env from backend root so it loads when running from backend/ or project root
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent
+_ENV_FILE = _BACKEND_ROOT / ".env"
 
 
 class Settings(BaseSettings):
@@ -25,21 +30,33 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     CORS_ORIGINS: List[str] = ["http://localhost:3000"]
 
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v: object) -> List[str]:
+        """Accept comma-separated string or list for local/production env."""
+        if isinstance(v, list):
+            return [x.strip() for x in v if isinstance(x, str) and x.strip()]
+        if isinstance(v, str):
+            return [x.strip() for x in v.split(",") if x.strip()]
+        return ["http://localhost:3000"]
+
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_ENV_FILE if _ENV_FILE.exists() else ".env",
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",
     )
 
-    # HubSpot
+    # HubSpot (explicit env names so .env / Railway HUBSPOT_* are always read)
     hubspot_api_key: str = Field(
         default="",
         description="HubSpot Private App access token (legacy)",
+        validation_alias="HUBSPOT_API_KEY",
     )
     hubspot_access_token: str = Field(
         default="",
         description="HubSpot OAuth or Private App access token (Bearer auth)",
+        validation_alias="HUBSPOT_ACCESS_TOKEN",
     )
 
     # LLM (at least one required for AI features)

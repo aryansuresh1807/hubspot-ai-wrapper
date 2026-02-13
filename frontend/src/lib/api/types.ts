@@ -128,6 +128,10 @@ export interface Contact {
   last_name?: string | null;
   company_id?: string | null;
   hubspot_id?: string | null;
+  phone?: string | null;
+  job_title?: string | null;
+  relationship_status?: string | null;
+  notes?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
