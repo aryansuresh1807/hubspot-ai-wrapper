@@ -6,9 +6,6 @@ import ProtectedRoute from '@/components/ProtectedRoute';
 import { useRouter } from 'next/navigation';
 import {
   Filter,
-  Mail,
-  Phone,
-  MessageSquare,
   Plus,
   ArrowUpDown,
   ClipboardList,
@@ -53,7 +50,7 @@ import { Skeleton } from '@/components/shared/skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
 import type { RelationshipStatus } from '@/components/shared/status-chip';
 import type { ProcessingStatusType } from '@/components/shared/processing-status';
-import { cn } from '@/lib/utils';
+import { cn, stripHtml } from '@/lib/utils';
 import {
   Tooltip,
   TooltipContent,
@@ -64,7 +61,6 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   getActivities,
   completeActivity,
-  createActivity,
   syncActivities,
   type DashboardActivity,
   type ActivitySortOption,
@@ -164,12 +160,14 @@ function apiActivityToDashboardItem(api: DashboardActivity): DashboardActivityIt
     ? [contact.first_name, contact.last_name].filter(Boolean).join(' ') || contact.email || 'Unknown'
     : 'Unknown';
   const lastTouch = api.due_date ?? api.updated_at ?? api.created_at ?? new Date().toISOString();
+  const rawSubject = api.subject ?? 'Untitled';
+  const rawBody = api.body ?? '';
   const activity: ActivityCardActivity = {
     id: api.id,
     contactName,
-    accountName: company?.name ?? '',
-    subject: api.subject ?? 'Untitled',
-    noteExcerpt: api.body ?? '',
+    accountName: contact?.company_name ?? company?.name ?? '',
+    subject: stripHtml(rawSubject),
+    noteExcerpt: stripHtml(rawBody),
     lastTouchDate: lastTouch,
     relationshipStatus: 'Active',
     opportunityPercentage: 0,
@@ -181,13 +179,15 @@ function apiActivityToDashboardItem(api: DashboardActivity): DashboardActivityIt
     totalTexts: 0,
     lastContact: lastTouch,
     averageResponseTime: '-',
-    keyPoints: api.body ? [api.body.slice(0, 120)] : [],
+    keyPoints: rawBody ? [stripHtml(rawBody)] : [],
   };
   const contactPreview: ContactPreviewContact = {
     name: contactName,
     email: contact?.email ?? undefined,
-    phone: undefined,
-    recentNotes: api.body ? [{ date: lastTouch, text: api.body.slice(0, 200) }] : [],
+    phone: contact?.phone ?? undefined,
+    mobilePhone: contact?.mobile_phone ?? undefined,
+    companyName: contact?.company_name ?? undefined,
+    recentNotes: [],
   };
   return { activity, communicationSummary, contact: contactPreview };
 }
@@ -228,21 +228,6 @@ function formatPageDate(date: Date): string {
     month: 'long',
     day: 'numeric',
   });
-}
-
-function formatLastContact(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  const now = new Date();
-  const diffMs = now.getTime() - d.getTime();
-  const diffMins = Math.floor(diffMs / (1000 * 60));
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays === 1) return 'Yesterday';
-  if (diffDays < 7) return `${diffDays} days ago`;
-  return d.toLocaleDateString();
 }
 
 function isSameDay(iso: string, dateStr: string): boolean {
@@ -424,7 +409,6 @@ export default function DashboardPage(): React.ReactElement {
   const [filterApplied, setFilterApplied] = React.useState<FilterState>(DEFAULT_FILTER);
   const [datePickerValue, setDatePickerValue] = React.useState<string>(getTodayDateString);
   const [completingId, setCompletingId] = React.useState<string | null>(null);
-  const [cloningId, setCloningId] = React.useState<string | null>(null);
   const [isSyncing, setIsSyncing] = React.useState(false);
   const [lastSyncedAt, setLastSyncedAt] = React.useState<number | null>(null);
   const [isOffline, setIsOffline] = React.useState(false);
@@ -582,9 +566,6 @@ export default function DashboardPage(): React.ReactElement {
   const selectedContact: ContactPreviewContact | null = selectedItem
     ? selectedItem.contact
     : null;
-  const selectedSummary: CommunicationSummary | null = selectedItem
-    ? selectedItem.communicationSummary
-    : null;
 
   const hasActiveFilters =
     filterApplied.relationshipStatus.length > 0 ||
@@ -607,32 +588,6 @@ export default function DashboardPage(): React.ReactElement {
       router.push(`/activity?id=${activity.id}`);
     },
     [router]
-  );
-
-  const handleClone = React.useCallback(
-    async (activity: ActivityCardActivity) => {
-      if (isOffline) {
-        showToast('warning', 'Working offline', 'Create and update are disabled until you\'re back online.');
-        return;
-      }
-      setCloningId(activity.id);
-      try {
-        const created = await createActivity({
-          subject: `${activity.subject} (Copy)`,
-          body: activity.noteExcerpt,
-          due_date: activity.lastTouchDate,
-          completed: false,
-        });
-        await queryClient.invalidateQueries({ queryKey: [ACTIVITIES_QUERY_KEY] });
-        setSelectedActivityId(created.id);
-        showToast('success', 'Activity duplicated', 'You can edit the new activity.');
-      } catch (err) {
-        showToast('error', 'Failed to duplicate activity', err instanceof Error ? err.message : 'Try again.');
-      } finally {
-        setCloningId(null);
-      }
-    },
-    [showToast, isOffline, queryClient]
   );
 
   const handleComplete = React.useCallback(
@@ -728,17 +683,6 @@ export default function DashboardPage(): React.ReactElement {
             )}
           </div>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-9 gap-1.5"
-          onClick={handleRefresh}
-          disabled={isSyncing || isLoading || isOffline}
-          aria-label="Refresh activities from HubSpot"
-        >
-          <RefreshCw className={cn('h-4 w-4', isSyncing && 'animate-spin')} />
-          {isSyncing ? 'Syncing…' : 'Refresh'}
-        </Button>
       </header>
 
       {/* Filter Dialog */}
@@ -953,7 +897,6 @@ export default function DashboardPage(): React.ReactElement {
                   isSelected={selectedActivityId === item.activity.id}
                   onClick={() => setSelectedActivityId(item.activity.id)}
                   onOpen={handleOpen}
-                  onClone={handleClone}
                   onComplete={handleComplete}
                 />
               ))
@@ -961,7 +904,7 @@ export default function DashboardPage(): React.ReactElement {
           </div>
         </section>
 
-        {/* Middle panel - Communication Summary + Communication history (task notes) */}
+        {/* Middle panel - Communication history (task notes) */}
         <section className="flex flex-col min-h-0 lg:col-span-3 lg:flex-shrink-0 lg:overflow-hidden">
           <Card className="h-full min-h-0 overflow-hidden flex flex-col">
             <CardHeader className="pb-2 shrink-0">
@@ -970,62 +913,18 @@ export default function DashboardPage(): React.ReactElement {
             <CardContent className="flex flex-col gap-4 flex-1 min-h-0 overflow-y-auto">
               {isLoading ? (
                 <CommunicationSummarySkeleton />
-              ) : selectedSummary ? (
-                <>
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="flex flex-col items-center rounded-md border border-border bg-muted/50 p-3">
-                      <Mail className="h-4 w-4 text-muted-foreground mb-1" />
-                      <span className="text-lg font-semibold">
-                        {selectedSummary.totalEmails}
-                      </span>
-                      <span className="text-xs text-muted-foreground">Emails</span>
-                    </div>
-                    <div className="flex flex-col items-center rounded-md border border-border bg-muted/50 p-3">
-                      <Phone className="h-4 w-4 text-muted-foreground mb-1" />
-                      <span className="text-lg font-semibold">
-                        {selectedSummary.totalCalls}
-                      </span>
-                      <span className="text-xs text-muted-foreground">Calls</span>
-                    </div>
-                    <div className="flex flex-col items-center rounded-md border border-border bg-muted/50 p-3">
-                      <MessageSquare className="h-4 w-4 text-muted-foreground mb-1" />
-                      <span className="text-lg font-semibold">
-                        {selectedSummary.totalTexts}
-                      </span>
-                      <span className="text-xs text-muted-foreground">Texts</span>
-                    </div>
-                  </div>
-                  <div className="space-y-1 text-sm">
-                    <p>
-                      <span className="text-muted-foreground">Last contact:</span>{' '}
-                      {formatLastContact(selectedSummary.lastContact)}
-                    </p>
-                    <p>
-                      <span className="text-muted-foreground">Avg response:</span>{' '}
-                      {selectedSummary.averageResponseTime}
-                    </p>
-                  </div>
-                  {/* Communication history: task notes (HubSpot task body) */}
-                  {selectedItem && (selectedItem.activity.noteExcerpt || selectedSummary.keyPoints?.length) ? (
-                    <div>
-                      <h3 className="text-sm font-medium mb-2">Communication history</h3>
-                      <p className="text-sm text-muted-foreground whitespace-pre-wrap">
-                        {selectedItem.activity.noteExcerpt || (selectedSummary.keyPoints ?? []).join('\n') || 'No notes saved for this task.'}
-                      </p>
-                    </div>
-                  ) : null}
-                  <div>
-                    <h3 className="text-sm font-medium mb-2">Key Points</h3>
-                    <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground">
-                      {(selectedSummary.keyPoints ?? []).slice(0, 5).map((point, i) => (
-                        <li key={i}>{point}</li>
-                      ))}
-                    </ul>
-                  </div>
-                </>
+              ) : selectedItem ? (
+                <div>
+                  <h3 className="text-sm font-medium mb-2">Communication history</h3>
+                  <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                    {selectedItem.activity.noteExcerpt
+                      ? stripHtml(selectedItem.activity.noteExcerpt)
+                      : 'No notes saved for this task.'}
+                  </p>
+                </div>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  Select an activity to see the communication summary.
+                  Select an activity to see the communication history.
                 </p>
               )}
             </CardContent>

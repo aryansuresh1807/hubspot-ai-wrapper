@@ -313,7 +313,7 @@ async def create_contact(
     supabase: SupabaseService = Depends(get_supabase_service),
     hubspot: HubSpotService = Depends(get_hubspot_service),
 ) -> ContactDetailResponse:
-    """POST /api/v1/contacts/ — create in HubSpot and cache."""
+    """POST /api/v1/contacts/ — create in HubSpot, optionally associate with company, and cache."""
     try:
         props = _contact_create_to_hubspot_properties(body)
         payload = {"properties": props}
@@ -321,7 +321,13 @@ async def create_contact(
         cid = contact_data.get("id")
         if not cid:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="HubSpot did not return contact id")
-        await supabase.upsert_contact_cache(user_id, str(cid), contact_data)
+        cid_str = str(cid)
+        if body.company_id and body.company_id.strip():
+            try:
+                hubspot.associate_contact_with_company(cid_str, body.company_id.strip())
+            except HubSpotServiceError as ae:
+                logger.warning("Contact created but company association failed: %s", ae.message)
+        await supabase.upsert_contact_cache(user_id, cid_str, contact_data)
         return _hubspot_contact_to_contact(contact_data)
     except HubSpotServiceError as e:
         raise HTTPException(

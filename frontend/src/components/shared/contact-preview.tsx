@@ -15,6 +15,8 @@ export interface ContactPreviewContact {
   name: string;
   phone?: string;
   email?: string;
+  mobilePhone?: string;
+  companyName?: string;
   recentNotes: ContactRecentNote[];
 }
 
@@ -89,9 +91,6 @@ const ContactPreview = React.forwardRef<HTMLDivElement, ContactPreviewProps>(
       return <EmptyState className={className} />;
     }
 
-    const recentNotes = contact.recentNotes?.slice(0, 3) ?? [];
-    const hasNotes = recentNotes.length > 0;
-
     return (
       <Card ref={ref} className={cn('overflow-hidden', className)}>
         <CardHeader className="pb-3">
@@ -99,18 +98,9 @@ const ContactPreview = React.forwardRef<HTMLDivElement, ContactPreviewProps>(
             {contact.name}
           </h2>
         </CardHeader>
-        <CardContent className="flex flex-col gap-6 pt-0">
-          {/* Contact info */}
+        <CardContent className="flex flex-col gap-4 pt-0">
+          {/* Contact info: email, phone, mobile, company */}
           <div className="flex flex-col gap-2">
-            {contact.phone && (
-              <a
-                href={`tel:${contact.phone}`}
-                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <Phone className="h-4 w-4 shrink-0" aria-hidden />
-                <span>{contact.phone}</span>
-              </a>
-            )}
             {contact.email && (
               <a
                 href={`mailto:${contact.email}`}
@@ -120,45 +110,34 @@ const ContactPreview = React.forwardRef<HTMLDivElement, ContactPreviewProps>(
                 <span>{contact.email}</span>
               </a>
             )}
-            {!contact.phone && !contact.email && (
+            {contact.phone && (
+              <a
+                href={`tel:${contact.phone}`}
+                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <Phone className="h-4 w-4 shrink-0" aria-hidden />
+                <span>{contact.phone}</span>
+              </a>
+            )}
+            {contact.mobilePhone && (
+              <a
+                href={`tel:${contact.mobilePhone}`}
+                className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <Phone className="h-4 w-4 shrink-0" aria-hidden />
+                <span>{contact.mobilePhone} (mobile)</span>
+              </a>
+            )}
+            {contact.companyName && (
+              <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">Company:</span>
+                <span>{contact.companyName}</span>
+              </p>
+            )}
+            {!contact.phone && !contact.email && !contact.mobilePhone && !contact.companyName && (
               <p className="text-sm text-muted-foreground">No contact info</p>
             )}
           </div>
-
-          {/* Recent Notes */}
-          <section className="flex flex-col gap-3">
-            <h3 className="text-sm font-semibold text-foreground">Recent Notes</h3>
-            {hasNotes ? (
-              <>
-                <ul className="flex flex-col gap-4">
-                  {recentNotes.map((note, index) => (
-                    <li key={index} className="flex flex-col gap-1">
-                      <time
-                        className="text-xs text-muted-foreground"
-                        dateTime={note.date}
-                      >
-                        {formatNoteDate(note.date)}
-                      </time>
-                      <p className="text-sm text-foreground line-clamp-2">
-                        {note.text || '—'}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-                {onViewAllNotes && (
-                  <button
-                    type="button"
-                    onClick={onViewAllNotes}
-                    className="text-sm font-medium text-primary hover:underline underline-offset-2 w-fit"
-                  >
-                    View All
-                  </button>
-                )}
-              </>
-            ) : (
-              <p className="text-sm text-muted-foreground">No recent notes</p>
-            )}
-          </section>
         </CardContent>
       </Card>
     );

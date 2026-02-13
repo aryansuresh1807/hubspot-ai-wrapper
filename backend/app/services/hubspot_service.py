@@ -443,7 +443,7 @@ class HubSpotService:
         """Batch fetch contacts by IDs. HubSpot batch read up to 100 per request."""
         if not contact_ids:
             return []
-        props = properties or ["firstname", "lastname", "email", "phone"]
+        props = properties or ["firstname", "lastname", "email", "phone", "mobilephone"]
         body: dict[str, Any] = {
             "properties": props,
             "inputs": [{"id": cid} for cid in contact_ids[:100]],
@@ -633,6 +633,84 @@ class HubSpotService:
         if isinstance(data, list):
             return [str(r.get("toObjectId") or r.get("id") or r) for r in data if isinstance(r, dict) and (r.get("toObjectId") or r.get("id"))]
         return []
+
+    def batch_read_contact_company_ids(self, contact_ids: list[str]) -> dict[str, str]:
+        """
+        Batch read contact->company associations. Returns dict contact_id -> first company_id.
+        """
+        if not contact_ids:
+            return {}
+        body: dict[str, Any] = {
+            "inputs": [{"id": cid} for cid in contact_ids[:100]],
+        }
+        try:
+            data = self._request(
+                "POST",
+                "/crm/v4/associations/contacts/companies/batch/read",
+                json=body,
+            )
+        except HubSpotServiceError:
+            raise
+        except Exception as e:
+            raise HubSpotServiceError(f"Failed to batch read contact-company associations: {e!s}") from e
+        result: dict[str, str] = {}
+        results = data.get("results", []) if isinstance(data, dict) else []
+        for r in results:
+            from_id = (r.get("from") or {}).get("id")
+            to_list = r.get("to") or []
+            if from_id is not None and to_list:
+                first_to = to_list[0] if isinstance(to_list[0], dict) else None
+                if first_to:
+                    to_id = first_to.get("toObjectId") or first_to.get("id")
+                    if to_id is not None:
+                        result[str(from_id)] = str(to_id)
+        return result
+
+    def get_companies_batch(
+        self,
+        company_ids: list[str],
+        properties: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Batch fetch companies by IDs. HubSpot batch read up to 100 per request."""
+        if not company_ids:
+            return []
+        props = properties or ["name"]
+        body: dict[str, Any] = {
+            "properties": props,
+            "inputs": [{"id": cid} for cid in company_ids[:100]],
+        }
+        try:
+            data = self._request(
+                "POST",
+                "/crm/v3/objects/companies/batch/read",
+                json=body,
+            )
+        except HubSpotServiceError:
+            raise
+        except Exception as e:
+            raise HubSpotServiceError(f"Failed to batch fetch companies: {e!s}") from e
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict) and "results" in data:
+            return data["results"]
+        return []
+
+    def associate_contact_with_company(self, contact_id: str, company_id: str) -> None:
+        """
+        Create default association between a contact and a company (v4 API).
+        PUT /crm/v4/objects/contact/{contactId}/associations/default/company/{companyId}
+        """
+        try:
+            self._request(
+                "PUT",
+                f"/crm/v4/objects/contact/{contact_id}/associations/default/company/{company_id}",
+            )
+        except HubSpotServiceError:
+            raise
+        except Exception as e:
+            raise HubSpotServiceError(
+                f"Failed to associate contact {contact_id} with company {company_id}: {e!s}"
+            ) from e
 
 
 def get_hubspot_service(access_token: str | None = None) -> HubSpotService:

@@ -158,7 +158,10 @@ def _apply_sort(activities: list[dict[str, Any]], sort: ActivitySortOption) -> l
     return sorted(activities, key=sort_key)
 
 
-def _contact_dict_to_info(c: dict[str, Any]) -> ContactInfo:
+def _contact_dict_to_info(
+    c: dict[str, Any],
+    company_name: str | None = None,
+) -> ContactInfo:
     """Build ContactInfo from HubSpot contact dict (properties may be nested)."""
     props = c.get("properties") or c
     return ContactInfo(
@@ -167,15 +170,20 @@ def _contact_dict_to_info(c: dict[str, Any]) -> ContactInfo:
         first_name=props.get("firstname"),
         last_name=props.get("lastname"),
         hubspot_id=str(c.get("id", "")),
+        phone=props.get("phone"),
+        mobile_phone=props.get("mobilephone"),
+        company_name=company_name,
     )
 
 
 def _activity_dict_to_response(a: dict[str, Any]) -> ActivityResponse:
     """Build ActivityResponse from our internal activity dict (strip _raw, _priority)."""
+    company_names = a.get("contact_company_names") or {}
     contacts: list[ContactInfo] = []
     for c in a.get("contacts") or []:
         if isinstance(c, dict) and (c.get("id") or c.get("properties")):
-            contacts.append(_contact_dict_to_info(c))
+            cid = str(c.get("id", ""))
+            contacts.append(_contact_dict_to_info(c, company_name=company_names.get(cid)))
     companies: list[CompanyInfo] = []
     for c in a.get("companies") or []:
         if isinstance(c, dict) and c.get("id"):
@@ -283,16 +291,38 @@ async def list_activities(
             date_from=date_from,
             date_to=date_to,
         )
-        # e) Enrich with contact details for contact_ids
+        # e) Enrich with contact details (phone, mobile_phone, company_name) for contact_ids
         all_contact_ids = list({cid for a in activities for cid in (a.get("contact_ids") or [])})
+        contact_id_to_company_name: dict[str, str] = {}
         if all_contact_ids:
             try:
-                contact_list = hubspot.get_contacts_batch(all_contact_ids)
+                contact_list = hubspot.get_contacts_batch(
+                    all_contact_ids,
+                    properties=["firstname", "lastname", "email", "phone", "mobilephone"],
+                )
                 contact_map = {str(c.get("id", "")): c for c in contact_list if c.get("id")}
+                try:
+                    contact_to_company = hubspot.batch_read_contact_company_ids(all_contact_ids)
+                    unique_company_ids = list(dict.fromkeys(contact_to_company.values()))
+                    if unique_company_ids:
+                        companies = hubspot.get_companies_batch(unique_company_ids, properties=["name"])
+                        company_name_by_id = {}
+                        for co in companies:
+                            cid = str(co.get("id", ""))
+                            props = co.get("properties") or {}
+                            company_name_by_id[cid] = props.get("name")
+                        for cid, co_id in contact_to_company.items():
+                            contact_id_to_company_name[cid] = company_name_by_id.get(co_id) or ""
+                except HubSpotServiceError:
+                    pass
                 for a in activities:
                     a["contacts"] = [
                         contact_map[cid] for cid in (a.get("contact_ids") or []) if cid in contact_map
                     ]
+                    a["contact_company_names"] = {
+                        cid: contact_id_to_company_name.get(cid, "")
+                        for cid in (a.get("contact_ids") or [])
+                    }
             except HubSpotServiceError:
                 pass  # keep contacts empty if batch fails
 

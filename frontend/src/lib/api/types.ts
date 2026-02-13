@@ -33,6 +33,9 @@ export interface ContactInfo {
   first_name?: string | null;
   last_name?: string | null;
   hubspot_id?: string | null;
+  phone?: string | null;
+  mobile_phone?: string | null;
+  company_name?: string | null;
 }
 
 export interface CompanyInfo {

@@ -41,7 +41,11 @@ import {
   updateContact,
   deleteContact,
   searchContacts,
+  searchCompanies,
+  createCompany,
   type Contact as ApiContact,
+  type CompanySearchResult,
+  type CompanyDetailResponse,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -57,18 +61,32 @@ const RELATIONSHIP_OPTIONS: RelationshipStatus[] = [
   'At-Risk',
 ];
 
-const MOCK_ACCOUNTS = [
-  { id: 'a1', name: 'Acme Corp' },
-  { id: 'a2', name: 'Globex Inc' },
-  { id: 'a3', name: 'Wayne Industries' },
-];
-
 const MOCK_CONTACTS = [
   { id: 'c1', name: 'Jane Cooper' },
   { id: 'c2', name: 'Robert Fox' },
 ];
 
-const MOCK_INDUSTRIES = ['Technology', 'Healthcare', 'Finance', 'Retail', 'Manufacturing'];
+export interface AddContactFormState {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  jobTitle: string;
+  accountId: string;
+  accountSearchDisplay: string;
+  relationshipStatus: string;
+}
+
+const INITIAL_ADD_CONTACT_FORM: AddContactFormState = {
+  firstName: '',
+  lastName: '',
+  email: '',
+  phone: '',
+  jobTitle: '',
+  accountId: '',
+  accountSearchDisplay: '',
+  relationshipStatus: '',
+};
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_REGEX = /^[\d\s\-+.()]*$/;
@@ -180,13 +198,125 @@ function DebouncedAutocomplete<T extends { id: string }>({
 }
 
 // ---------------------------------------------------------------------------
+// Company search (API-backed)
+// ---------------------------------------------------------------------------
+
+function CompanySearchAutocomplete({
+  value,
+  onChange,
+  onSelect,
+  placeholder,
+  className,
+  disabled,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onSelect: (company: CompanySearchResult) => void;
+  placeholder?: string;
+  className?: string;
+  disabled?: boolean;
+}): React.ReactElement {
+  const [open, setOpen] = React.useState(false);
+  const debouncedQuery = useDebouncedValue(value.trim(), DEBOUNCE_MS);
+  const [options, setOptions] = React.useState<CompanySearchResult[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const ref = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (!debouncedQuery) {
+      setOptions([]);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    searchCompanies(debouncedQuery)
+      .then((list) => {
+        if (!cancelled) setOptions(list);
+      })
+      .catch(() => {
+        if (!cancelled) setOptions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedQuery]);
+
+  React.useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const displayOptions = options.slice(0, 10);
+  const showDropdown = open && (loading || displayOptions.length > 0);
+
+  return (
+    <div ref={ref} className={cn('relative', className)}>
+      <Input
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        placeholder={placeholder ?? 'Search companies...'}
+        disabled={disabled}
+      />
+      {showDropdown && (
+        <ul
+          className="absolute z-10 mt-1 w-full rounded-md border border-border bg-popover py-1 shadow-soft-lg max-h-48 overflow-auto"
+          role="listbox"
+        >
+          {loading ? (
+            <li className="px-3 py-2 text-sm text-muted-foreground flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Searching...
+            </li>
+          ) : (
+            displayOptions.map((c) => (
+              <li
+                key={c.id}
+                role="option"
+                className="cursor-pointer px-3 py-2 text-sm hover:bg-accent"
+                onClick={() => {
+                  onChange(c.name ?? c.id);
+                  onSelect(c);
+                  setOpen(false);
+                }}
+              >
+                {c.name ?? c.id}
+                {c.domain ? (
+                  <span className="text-muted-foreground ml-1 text-xs">({c.domain})</span>
+                ) : null}
+              </li>
+            ))
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Contact tab
 // ---------------------------------------------------------------------------
 
 const CONTACTS_QUERY_KEY = 'contacts';
 
-function ContactTabContent(): React.ReactElement {
+function ContactTabContent({
+  addContactForm,
+  setAddContactForm,
+}: {
+  addContactForm: AddContactFormState;
+  setAddContactForm: React.Dispatch<React.SetStateAction<AddContactFormState>>;
+}): React.ReactElement {
   const queryClient = useQueryClient();
+  const router = useRouter();
   const [searchInput, setSearchInput] = React.useState('');
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [firstName, setFirstName] = React.useState('');
@@ -267,7 +397,7 @@ function ContactTabContent(): React.ReactElement {
     setPhone(c.phone ?? '');
     setJobTitle(c.job_title ?? '');
     setAccountId(c.company_id ?? '');
-    setAccountSearchDisplay('');
+    setAccountSearchDisplay(c.company_name ?? '');
     setRelationshipStatus(c.relationship_status ?? '');
     setNotes(c.notes ?? '');
     setErrors({});
@@ -306,30 +436,37 @@ function ContactTabContent(): React.ReactElement {
 
   const handleContactSubmit = async (
     e: React.FormEvent,
-    _linkToActivity: boolean,
-    addAnother: boolean,
     onEditSuccess?: () => void
   ) => {
     e.preventDefault();
+    const isEdit = !!editingId;
+    const fn = isEdit ? firstName.trim() : addContactForm.firstName.trim();
+    const ln = isEdit ? lastName.trim() : addContactForm.lastName.trim();
+    const em = isEdit ? email.trim() : addContactForm.email.trim();
+    const ph = isEdit ? phone.trim() : addContactForm.phone.trim();
+    const jt = isEdit ? jobTitle.trim() : addContactForm.jobTitle.trim();
+    const cid = isEdit ? accountId : addContactForm.accountId;
+    const rs = isEdit ? relationshipStatus : addContactForm.relationshipStatus;
+
     const next: Record<string, string> = {};
-    if (!firstName.trim()) next.firstName = 'First name is required';
-    if (!lastName.trim()) next.lastName = 'Last name is required';
-    if (!email.trim()) next.email = 'Email is required';
-    else if (!validateEmail(email)) next.email = 'Enter a valid email address';
-    if (phone.trim() && !validatePhone(phone)) next.phone = 'Enter a valid phone number';
+    if (!fn) next.firstName = 'First name is required';
+    if (!ln) next.lastName = 'Last name is required';
+    if (!em) next.email = 'Email is required';
+    else if (!validateEmail(em)) next.email = 'Enter a valid email address';
+    if (ph && !validatePhone(ph)) next.phone = 'Enter a valid phone number';
     setErrors(next);
     if (Object.keys(next).length > 0) return;
     setContactSubmitLoading(true);
     try {
       if (editingId) {
         await updateContact(editingId, {
-          first_name: firstName.trim(),
-          last_name: lastName.trim(),
-          email: email.trim(),
-          phone: phone.trim() || null,
-          job_title: jobTitle.trim() || null,
-          company_id: accountId || null,
-          relationship_status: relationshipStatus || null,
+          first_name: fn,
+          last_name: ln,
+          email: em,
+          phone: ph || null,
+          job_title: jt || null,
+          company_id: cid || null,
+          relationship_status: rs || null,
           notes: notes.trim() || null,
         });
         showToast('success', 'Contact updated');
@@ -339,19 +476,19 @@ function ContactTabContent(): React.ReactElement {
         onEditSuccess?.();
       } else {
         await createContact({
-          first_name: firstName.trim(),
-          last_name: lastName.trim(),
-          email: email.trim(),
-          phone: phone.trim() || null,
-          job_title: jobTitle.trim() || null,
-          company_id: accountId || null,
-          relationship_status: relationshipStatus || null,
-          notes: notes.trim() || null,
+          first_name: fn,
+          last_name: ln,
+          email: em,
+          phone: ph || null,
+          job_title: jt || null,
+          company_id: cid || null,
+          relationship_status: rs || null,
+          notes: null,
         });
-        showToast('success', 'Contact created', addAnother ? 'Add another below.' : undefined);
+        showToast('success', 'Contact created');
         await refreshContactList();
-        resetContactForm();
-        if (!addAnother) setEditingId(null);
+        setAddContactForm(INITIAL_ADD_CONTACT_FORM);
+        setEditingId(null);
       }
     } catch (err) {
       showToast(
@@ -607,7 +744,7 @@ function ContactTabContent(): React.ReactElement {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              handleContactSubmit(e, false, false, () => setEditDialogOpen(false));
+              handleContactSubmit(e, () => setEditDialogOpen(false));
             }}
             className="space-y-4"
           >
@@ -677,20 +814,17 @@ function ContactTabContent(): React.ReactElement {
             </div>
             <div>
               <Label>Account</Label>
-              <DebouncedAutocomplete
-                value={accountSearchDisplay || MOCK_ACCOUNTS.find((a) => a.id === accountId)?.name || ''}
+              <CompanySearchAutocomplete
+                value={accountSearchDisplay || ''}
                 onChange={(v) => {
                   setAccountSearchDisplay(v);
-                  const acc = MOCK_ACCOUNTS.find((a) => a.name === v);
-                  setAccountId(acc?.id ?? '');
+                  if (!v) setAccountId('');
                 }}
-                placeholder="Search accounts..."
-                options={MOCK_ACCOUNTS}
-                getOptionLabel={(a) => a.name}
-                onSelect={(a) => {
-                  setAccountId(a.id);
-                  setAccountSearchDisplay(a.name);
+                onSelect={(c) => {
+                  setAccountId(c.id);
+                  setAccountSearchDisplay(c.name ?? c.id);
                 }}
+                placeholder="Search companies..."
                 className="mt-1"
               />
             </div>
@@ -758,8 +892,8 @@ function ContactTabContent(): React.ReactElement {
                   <Label htmlFor="firstName">First Name *</Label>
                   <Input
                     id="firstName"
-                    value={firstName}
-                    onChange={(e) => setFirstName(e.target.value)}
+                    value={addContactForm.firstName}
+                    onChange={(e) => setAddContactForm((p) => ({ ...p, firstName: e.target.value }))}
                     className="mt-1"
                     error={!!errors.firstName}
                   />
@@ -771,8 +905,8 @@ function ContactTabContent(): React.ReactElement {
                   <Label htmlFor="lastName">Last Name *</Label>
                   <Input
                     id="lastName"
-                    value={lastName}
-                    onChange={(e) => setLastName(e.target.value)}
+                    value={addContactForm.lastName}
+                    onChange={(e) => setAddContactForm((p) => ({ ...p, lastName: e.target.value }))}
                     className="mt-1"
                     error={!!errors.lastName}
                   />
@@ -786,8 +920,8 @@ function ContactTabContent(): React.ReactElement {
                 <Input
                   id="email"
                   type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  value={addContactForm.email}
+                  onChange={(e) => setAddContactForm((p) => ({ ...p, email: e.target.value }))}
                   className="mt-1"
                   error={!!errors.email}
                 />
@@ -799,8 +933,8 @@ function ContactTabContent(): React.ReactElement {
                 <Label htmlFor="phone">Phone</Label>
                 <Input
                   id="phone"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
+                  value={addContactForm.phone}
+                  onChange={(e) => setAddContactForm((p) => ({ ...p, phone: e.target.value }))}
                   className="mt-1"
                   error={!!errors.phone}
                 />
@@ -812,33 +946,43 @@ function ContactTabContent(): React.ReactElement {
                 <Label htmlFor="jobTitle">Job Title</Label>
                 <Input
                   id="jobTitle"
-                  value={jobTitle}
-                  onChange={(e) => setJobTitle(e.target.value)}
+                  value={addContactForm.jobTitle}
+                  onChange={(e) => setAddContactForm((p) => ({ ...p, jobTitle: e.target.value }))}
                   className="mt-1"
                 />
               </div>
               <div>
                 <Label>Account</Label>
-                <DebouncedAutocomplete
-                  value={accountSearchDisplay || MOCK_ACCOUNTS.find((a) => a.id === accountId)?.name || ''}
+                <CompanySearchAutocomplete
+                  value={addContactForm.accountSearchDisplay}
                   onChange={(v) => {
-                    setAccountSearchDisplay(v);
-                    const acc = MOCK_ACCOUNTS.find((a) => a.name === v);
-                    setAccountId(acc?.id ?? '');
+                    setAddContactForm((p) => ({ ...p, accountSearchDisplay: v, ...(v ? {} : { accountId: '' }) }));
                   }}
-                  placeholder="Search accounts..."
-                  options={MOCK_ACCOUNTS}
-                  getOptionLabel={(a) => a.name}
-                  onSelect={(a) => {
-                    setAccountId(a.id);
-                    setAccountSearchDisplay(a.name);
+                  onSelect={(c) => {
+                    setAddContactForm((p) => ({
+                      ...p,
+                      accountId: c.id,
+                      accountSearchDisplay: c.name ?? c.id,
+                    }));
                   }}
+                  placeholder="Search companies..."
                   className="mt-1"
                 />
+                <Button
+                  type="button"
+                  variant="link"
+                  className="mt-1.5 h-auto p-0 text-sm text-primary"
+                  onClick={() => router.replace('/contacts?tab=account&returnToContact=1')}
+                >
+                  + Create account
+                </Button>
               </div>
               <div>
                 <Label>Relationship Status</Label>
-                <Select value={relationshipStatus} onValueChange={setRelationshipStatus}>
+                <Select
+                  value={addContactForm.relationshipStatus}
+                  onValueChange={(v) => setAddContactForm((p) => ({ ...p, relationshipStatus: v }))}
+                >
                   <SelectTrigger className="mt-1">
                     <SelectValue placeholder="Select status" />
                   </SelectTrigger>
@@ -853,35 +997,17 @@ function ContactTabContent(): React.ReactElement {
                   </SelectContent>
                 </Select>
               </div>
-              <div>
-                <Label htmlFor="notes">Notes</Label>
-                <Textarea
-                  id="notes"
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  className="mt-1 min-h-[80px]"
-                  placeholder="Add notes..."
-                />
-              </div>
               <div className="flex flex-wrap gap-2 pt-2">
                 <Button
                   type="button"
                   variant="secondary"
-                  onClick={(e) => handleContactSubmit(e, false, false)}
+                  onClick={(e) => handleContactSubmit(e)}
                   disabled={contactSubmitLoading}
                 >
                   {contactSubmitLoading ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : null}
                   Create Contact
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={(e) => handleContactSubmit(e, false, true)}
-                  disabled={contactSubmitLoading}
-                >
-                  Create & Add Another
                 </Button>
               </div>
             </form>
@@ -907,17 +1033,19 @@ function ContactTabContent(): React.ReactElement {
 // Account tab
 // ---------------------------------------------------------------------------
 
-function AccountTabContent(): React.ReactElement {
+function AccountTabContent({
+  returnToContact,
+  onCreateAndGoBack,
+}: {
+  returnToContact: boolean;
+  onCreateAndGoBack: (company: { id: string; name: string }) => void;
+}): React.ReactElement {
   const [companyName, setCompanyName] = React.useState('');
   const [domain, setDomain] = React.useState('');
-  const [industry, setIndustry] = React.useState('');
-  const [defaultContactId, setDefaultContactId] = React.useState('');
-  const [defaultContactDisplay, setDefaultContactDisplay] = React.useState('');
-  const [tags, setTags] = React.useState<string[]>([]);
-  const [tagInput, setTagInput] = React.useState('');
+  const [companyOwner, setCompanyOwner] = React.useState('');
+  const [city, setCity] = React.useState('');
+  const [stateRegion, setStateRegion] = React.useState('');
   const [errors, setErrors] = React.useState<Record<string, string>>({});
-  const [suggestedIndustry, setSuggestedIndustry] = React.useState('');
-  const [similarCompanies] = React.useState(['Acme Corp', 'Globex Inc', 'Initech']);
   const [accountSubmitLoading, setAccountSubmitLoading] = React.useState(false);
   const [toast, setToast] = React.useState<{
     open: boolean;
@@ -933,54 +1061,67 @@ function AccountTabContent(): React.ReactElement {
   const resetAccountForm = () => {
     setCompanyName('');
     setDomain('');
-    setIndustry('');
-    setDefaultContactId('');
-    setDefaultContactDisplay('');
-    setTags([]);
-    setTagInput('');
+    setCompanyOwner('');
+    setCity('');
+    setStateRegion('');
     setErrors({});
   };
 
-  const addTag = () => {
-    const t = tagInput.trim();
-    if (t && !tags.includes(t)) {
-      setTags((prev) => [...prev, t]);
-      setTagInput('');
-    }
+  const buildPayload = (): { name: string; domain: string; city?: string; state?: string; company_owner?: string } => {
+    return {
+      name: companyName.trim(),
+      domain: domain.trim(),
+      ...(city.trim() && { city: city.trim() }),
+      ...(stateRegion.trim() && { state: stateRegion.trim() }),
+      ...(companyOwner.trim() && { company_owner: companyOwner.trim() }),
+    };
   };
 
-  const removeTag = (index: number) => {
-    setTags((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const handleAccountSubmit = async (e: React.FormEvent, addAnother: boolean) => {
-    e.preventDefault();
+  const submitAccount = async (): Promise<CompanyDetailResponse | null> => {
     const next: Record<string, string> = {};
     if (!companyName.trim()) next.companyName = 'Company name is required';
+    if (!domain.trim()) next.domain = 'Domain is required';
     setErrors(next);
-    if (Object.keys(next).length > 0) return;
+    if (Object.keys(next).length > 0) return null;
     setAccountSubmitLoading(true);
     try {
-      await new Promise((r) => setTimeout(r, 800));
+      const created = await createCompany(buildPayload());
       showToast('success', 'Account created');
       resetAccountForm();
-      if (addAnother) setSuggestedIndustry('');
-    } catch {
-      showToast('error', 'Failed to create account', 'Please try again.');
+      return created;
+    } catch (err) {
+      showToast(
+        'error',
+        'Failed to create account',
+        err instanceof Error ? err.message : 'Please try again.'
+      );
+      return null;
+    } finally {
+      setAccountSubmitLoading(false);
     }
-    setAccountSubmitLoading(false);
   };
 
-  React.useEffect(() => {
-    if (companyName.trim().length >= 2) setSuggestedIndustry('Technology');
-    else if (!companyName.trim()) setSuggestedIndustry('');
-  }, [companyName]);
+  const handleCreateAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await submitAccount();
+  };
+
+  const handleCreateAndGoBack = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const created = await submitAccount();
+    if (created) {
+      onCreateAndGoBack({ id: created.id, name: created.name ?? created.id });
+    }
+  };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-6">
+    <div className="space-y-6">
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Account details</CardTitle>
+          <p className="text-sm text-muted-foreground mt-1">
+            Create a company in HubSpot. Company name and domain are required.
+          </p>
         </CardHeader>
         <CardContent>
           <form onSubmit={(e) => e.preventDefault()} className="space-y-4">
@@ -998,135 +1139,70 @@ function AccountTabContent(): React.ReactElement {
               )}
             </div>
             <div>
-              <Label htmlFor="domain">Domain</Label>
+              <Label htmlFor="domain">Domain *</Label>
               <Input
                 id="domain"
                 value={domain}
                 onChange={(e) => setDomain(e.target.value)}
                 placeholder="example.com"
                 className="mt-1"
+                error={!!errors.domain}
               />
+              {errors.domain && (
+                <p className="text-xs text-status-at-risk mt-1">{errors.domain}</p>
+              )}
             </div>
             <div>
-              <Label>Industry</Label>
-              <Select value={industry} onValueChange={setIndustry}>
-                <SelectTrigger className="mt-1">
-                  <SelectValue placeholder="Select industry" />
-                </SelectTrigger>
-                <SelectContent>
-                  {MOCK_INDUSTRIES.map((i) => (
-                    <SelectItem key={i} value={i}>
-                      {i}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Default Contact</Label>
-              <DebouncedAutocomplete
-                value={defaultContactDisplay || MOCK_CONTACTS.find((c) => c.id === defaultContactId)?.name || ''}
-                onChange={(v) => {
-                  setDefaultContactDisplay(v);
-                  const c = MOCK_CONTACTS.find((x) => x.name === v);
-                  setDefaultContactId(c?.id ?? '');
-                }}
-                placeholder="Search contacts..."
-                options={MOCK_CONTACTS}
-                getOptionLabel={(c) => c.name}
-                onSelect={(c) => {
-                  setDefaultContactId(c.id);
-                  setDefaultContactDisplay(c.name);
-                }}
+              <Label htmlFor="companyOwner">Company Owner</Label>
+              <Input
+                id="companyOwner"
+                value={companyOwner}
+                onChange={(e) => setCompanyOwner(e.target.value)}
+                placeholder="HubSpot owner ID or email"
                 className="mt-1"
               />
             </div>
-            <div>
-              <Label>Tags</Label>
-              <div className="flex flex-wrap gap-2 mt-1">
-                {tags.map((t, i) => (
-                  <span
-                    key={i}
-                    className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-sm"
-                  >
-                    {t}
-                    <button
-                      type="button"
-                      onClick={() => removeTag(i)}
-                      className="rounded-full p-0.5 hover:bg-muted-foreground/20"
-                      aria-label={`Remove ${t}`}
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </span>
-                ))}
-                <div className="flex gap-1 flex-1 min-w-[120px]">
-                  <Input
-                    value={tagInput}
-                    onChange={(e) => setTagInput(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addTag())}
-                    placeholder="Add tag..."
-                    className="h-8"
-                  />
-                  <Button type="button" variant="outline" size="sm" onClick={addTag}>
-                    Add
-                  </Button>
-                </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="city">City</Label>
+                <Input
+                  id="city"
+                  value={city}
+                  onChange={(e) => setCity(e.target.value)}
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label htmlFor="stateRegion">State / Region</Label>
+                <Input
+                  id="stateRegion"
+                  value={stateRegion}
+                  onChange={(e) => setStateRegion(e.target.value)}
+                  className="mt-1"
+                />
               </div>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 pt-2">
               <Button
                 type="button"
-                onClick={(e) => handleAccountSubmit(e, false)}
+                onClick={handleCreateAccount}
                 disabled={accountSubmitLoading}
               >
                 {accountSubmitLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                 Create Account
               </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={(e) => handleAccountSubmit(e, true)}
-                disabled={accountSubmitLoading}
-              >
-                Create & Add Another
-              </Button>
+              {returnToContact && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleCreateAndGoBack}
+                  disabled={accountSubmitLoading}
+                >
+                  Create and go back to contact creation
+                </Button>
+              )}
             </div>
           </form>
-        </CardContent>
-      </Card>
-
-      {/* AI Suggestions */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">AI Suggestions</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {suggestedIndustry && (
-            <div className="flex items-center justify-between gap-2 rounded-md border border-border p-2">
-              <span className="text-sm">{suggestedIndustry}</span>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setIndustry(suggestedIndustry)}
-              >
-                Apply
-              </Button>
-            </div>
-          )}
-          <div>
-            <p className="text-sm font-medium mb-2">Similar Companies</p>
-            <ul className="space-y-1">
-              {similarCompanies.map((name) => (
-                <li key={name} className="text-sm text-muted-foreground">
-                  {name}
-                </li>
-              ))}
-            </ul>
-          </div>
-          {!suggestedIndustry && (
-            <p className="text-sm text-muted-foreground">Suggestions appear after extraction or when available.</p>
-          )}
         </CardContent>
       </Card>
 
@@ -1152,12 +1228,30 @@ function ContactsPageContent(): React.ReactElement {
   const searchParams = useSearchParams();
   const tabParam = searchParams.get('tab');
   const activeTab = tabParam === 'account' ? 'account' : 'contact';
+  const returnToContact = searchParams.get('returnToContact') === '1';
+
+  const [addContactForm, setAddContactForm] = React.useState<AddContactFormState>(INITIAL_ADD_CONTACT_FORM);
+
+  const handleCreateAndGoBack = React.useCallback(
+    (company: { id: string; name: string }) => {
+      setAddContactForm((prev) => ({
+        ...prev,
+        accountId: company.id,
+        accountSearchDisplay: company.name,
+      }));
+      router.replace('/contacts?tab=contact', { scroll: false });
+    },
+    [router]
+  );
 
   const handleTabChange = React.useCallback(
     (value: string) => {
-      router.replace(`/contacts?tab=${value}`, { scroll: false });
+      const params = new URLSearchParams(searchParams.toString());
+      params.set('tab', value);
+      if (value !== 'account') params.delete('returnToContact');
+      router.replace(`/contacts?${params.toString()}`, { scroll: false });
     },
-    [router]
+    [router, searchParams]
   );
 
   return (
@@ -1178,10 +1272,16 @@ function ContactsPageContent(): React.ReactElement {
           <TabsTrigger value="account">Account</TabsTrigger>
         </TabsList>
         <TabsContent value="contact" className="mt-4">
-          <ContactTabContent />
+          <ContactTabContent
+            addContactForm={addContactForm}
+            setAddContactForm={setAddContactForm}
+          />
         </TabsContent>
         <TabsContent value="account" className="mt-4">
-          <AccountTabContent />
+          <AccountTabContent
+            returnToContact={returnToContact}
+            onCreateAndGoBack={handleCreateAndGoBack}
+          />
         </TabsContent>
       </Tabs>
     </div>

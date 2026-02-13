@@ -4,8 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState } from 'react';
 
 /** Keep cached data so it persists when navigating between pages or tabbing away. */
-const CACHE_STALE_MS = 5 * 60 * 1000; // 5 min – data stays "fresh", no refetch when returning
-const CACHE_GC_MS = 30 * 60 * 1000; // 30 min – keep unused cache for back-navigation
+const CACHE_STALE_MS = 30 * 60 * 1000; // 30 min – data stays "fresh", no refetch when returning
+const CACHE_GC_MS = 45 * 60 * 1000;   // 45 min – keep unused cache so 30 min "stay loaded" is covered
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(

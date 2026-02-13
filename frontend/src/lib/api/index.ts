@@ -33,6 +33,14 @@ export {
   searchContacts,
 } from './contacts';
 
+export {
+  searchCompanies,
+  createCompany,
+  type CompanySearchResult,
+  type CompanyCreate,
+  type CompanyDetailResponse,
+} from './companies';
+
 export type {
   ActivityQueryParams,
   ActivitySortOption,

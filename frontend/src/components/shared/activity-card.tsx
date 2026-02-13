@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { ExternalLink, Copy, Check } from 'lucide-react';
+import { ExternalLink, Check } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { StatusChip, type RelationshipStatus } from '@/components/shared/status-chip';
@@ -29,7 +29,6 @@ export interface ActivityCardProps {
   isSelected?: boolean;
   onClick?: () => void;
   onOpen?: (activity: ActivityCardActivity) => void;
-  onClone?: (activity: ActivityCardActivity) => void;
   onComplete?: (activity: ActivityCardActivity) => void;
   className?: string;
 }
@@ -57,7 +56,6 @@ const ActivityCard = React.forwardRef<HTMLDivElement, ActivityCardProps>(
       isSelected = false,
       onClick,
       onOpen,
-      onClone,
       onComplete,
       className,
     },
@@ -71,11 +69,6 @@ const ActivityCard = React.forwardRef<HTMLDivElement, ActivityCardProps>(
     const handleOpen = (e: React.MouseEvent) => {
       e.stopPropagation();
       onOpen?.(activity);
-    };
-
-    const handleClone = (e: React.MouseEvent) => {
-      e.stopPropagation();
-      onClone?.(activity);
     };
 
     const handleComplete = (e: React.MouseEvent) => {
@@ -113,14 +106,9 @@ const ActivityCard = React.forwardRef<HTMLDivElement, ActivityCardProps>(
             </span>
           </div>
 
-          {/* Subject line (medium font) */}
-          <p className="text-sm font-medium text-foreground line-clamp-1">
-            {activity.subject}
-          </p>
-
-          {/* Note excerpt (2 lines max) */}
-          <p className="text-sm text-muted-foreground line-clamp-2">
-            {activity.noteExcerpt || '—'}
+          {/* Title (task subject only) */}
+          <p className="text-sm font-medium text-foreground line-clamp-2">
+            {activity.subject || '—'}
           </p>
 
           {/* Last touch date and relationship status chip */}
@@ -159,15 +147,6 @@ const ActivityCard = React.forwardRef<HTMLDivElement, ActivityCardProps>(
             >
               <ExternalLink className="h-3.5 w-3" />
               Open
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 px-2 text-xs gap-1"
-              onClick={handleClone}
-            >
-              <Copy className="h-3.5 w-3" />
-              Clone
             </Button>
             <Button
               variant="ghost"
