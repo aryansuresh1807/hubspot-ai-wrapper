@@ -3,6 +3,7 @@ Application configuration from environment variables.
 Settings class using pydantic-settings with optional validation.
 """
 
+import json
 from functools import lru_cache
 from pathlib import Path
 from typing import List
@@ -28,17 +29,22 @@ class Settings(BaseSettings):
 
     # Application
     ENVIRONMENT: str = "development"
-    CORS_ORIGINS: List[str] = ["http://localhost:3000"]
+    # Store as string so env (e.g. Railway) never triggers json.loads; parsed in cors_origins_list.
+    cors_origins: str = Field(
+        default="http://localhost:3000",
+        description="Comma-separated origins or JSON array",
+        validation_alias="CORS_ORIGINS",
+    )
 
-    @field_validator("CORS_ORIGINS", mode="before")
+    @field_validator("cors_origins", mode="before")
     @classmethod
-    def parse_cors_origins(cls, v: object) -> List[str]:
-        """Accept comma-separated string or list for local/production env."""
+    def normalize_cors_origins(cls, v: object) -> str:
+        """Ensure we always have a string (avoid empty env causing json.loads in pydantic-settings)."""
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return "http://localhost:3000"
         if isinstance(v, list):
-            return [x.strip() for x in v if isinstance(x, str) and x.strip()]
-        if isinstance(v, str):
-            return [x.strip() for x in v.split(",") if x.strip()]
-        return ["http://localhost:3000"]
+            return ",".join(str(x).strip() for x in v if str(x).strip())
+        return str(v).strip()
 
     model_config = SettingsConfigDict(
         env_file=_ENV_FILE if _ENV_FILE.exists() else ".env",
@@ -77,7 +83,18 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins_list(self) -> List[str]:
-        return list(self.CORS_ORIGINS)
+        """Parse CORS_ORIGINS from comma-separated or JSON array string."""
+        raw = (self.cors_origins or "").strip()
+        if not raw:
+            return ["http://localhost:3000"]
+        if raw.startswith("["):
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    return [x.strip() for x in parsed if isinstance(x, str) and x.strip()]
+            except Exception:
+                pass
+        return [x.strip() for x in raw.split(",") if x.strip()] or ["http://localhost:3000"]
 
     @field_validator("frontend_url", mode="before")
     @classmethod
