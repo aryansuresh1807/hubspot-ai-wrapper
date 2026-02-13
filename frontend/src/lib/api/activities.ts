@@ -3,7 +3,7 @@
  * Uses NEXT_PUBLIC_API_URL and Supabase session (Bearer) for auth.
  */
 
-import { createClient } from '@/lib/supabase/client';
+import { supabase } from '@/lib/supabase.js';
 import { ApiClientError } from './client';
 import type {
   ActivityListResponse,
@@ -37,7 +37,6 @@ const getBaseUrl = (): string => {
  * Use for authenticated API requests.
  */
 export async function getAuthHeaders(): Promise<HeadersInit> {
-  const supabase = createClient();
   const {
     data: { session },
     error,
