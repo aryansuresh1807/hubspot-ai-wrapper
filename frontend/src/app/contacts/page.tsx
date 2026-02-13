@@ -282,6 +282,7 @@ function CompanySearchAutocomplete({
               <li
                 key={c.id}
                 role="option"
+                aria-selected={value === (c.name ?? c.id)}
                 className="cursor-pointer px-3 py-2 text-sm hover:bg-accent"
                 onClick={() => {
                   onChange(c.name ?? c.id);

@@ -424,7 +424,7 @@ function contactDisplayName(c: Contact): string {
   return name || c.email || c.id;
 }
 
-export default function ActivityPage(): React.ReactElement {
+function ActivityPageContent(): React.ReactElement {
   const router = useRouter();
   const searchParams = useSearchParams();
   const activityId = searchParams.get('id');
@@ -1002,6 +1002,7 @@ export default function ActivityPage(): React.ReactElement {
                         <li
                           key={contact.id}
                           role="option"
+                          aria-selected={selectedContact?.id === contact.id}
                           className="cursor-pointer px-3 py-2 text-sm hover:bg-accent w-full text-left"
                           onClick={() => {
                             setContactSearch(contactDisplayName(contact));
@@ -1057,6 +1058,7 @@ export default function ActivityPage(): React.ReactElement {
                         <li
                           key={account.id}
                           role="option"
+                          aria-selected={selectedAccount?.id === account.id}
                           className="cursor-pointer px-3 py-2 text-sm hover:bg-accent w-full text-left"
                           onClick={() => {
                             setAccountSearch(account.name ?? '');
@@ -1678,5 +1680,23 @@ export default function ActivityPage(): React.ReactElement {
       </Dialog>
     </div>
     </ProtectedRoute>
+  );
+}
+
+function ActivityPageFallback(): React.ReactElement {
+  return (
+    <ProtectedRoute>
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    </ProtectedRoute>
+  );
+}
+
+export default function ActivityPage(): React.ReactElement {
+  return (
+    <React.Suspense fallback={<ActivityPageFallback />}>
+      <ActivityPageContent />
+    </React.Suspense>
   );
 }
