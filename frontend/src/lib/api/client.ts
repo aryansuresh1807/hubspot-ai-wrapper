@@ -4,11 +4,19 @@
  */
 
 const getBaseUrl = (): string => {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+  const raw = process.env.NEXT_PUBLIC_API_URL;
+  const apiUrl = typeof raw === 'string' ? raw.trim() : '';
   if (!apiUrl) {
-    throw new Error('NEXT_PUBLIC_API_URL is not configured. Please set it in your environment variables.');
+    throw new Error('NEXT_PUBLIC_API_URL is not configured. Please set it in your environment variables (e.g. http://localhost:8000).');
   }
-  return apiUrl;
+  try {
+    new URL(apiUrl);
+  } catch {
+    throw new Error(
+      'NEXT_PUBLIC_API_URL must be a valid absolute URL (e.g. http://localhost:8000). Got: ' + JSON.stringify(raw)
+    );
+  }
+  return apiUrl.replace(/\/$/, '');
 };
 
 export type ApiError = {
@@ -60,7 +68,7 @@ export async function apiRequest<T = unknown>(
   config: RequestConfig = {}
 ): Promise<T> {
   const { params, ...init } = config;
-  const base = getBaseUrl().replace(/\/$/, '');
+  const base = getBaseUrl();
   const url = new URL(path.startsWith('/') ? path : `/${path}`, base);
   if (params) {
     Object.entries(params).forEach(([key, value]) => {
