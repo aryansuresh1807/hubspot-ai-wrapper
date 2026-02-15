@@ -6,10 +6,19 @@ const nextConfig = {
     ignoreBuildErrors: true,
   },
 
-  // Optional: proxy API to backend in dev (or use NEXT_PUBLIC_API_URL)
-  // async rewrites() {
-  //   return [{ source: '/api/proxy/:path*', destination: 'http://localhost:8000/:path*' }];
-  // },
+  // When API_URL is set (e.g. on Vercel), proxy /api/v1/* to the backend so the client
+  // can use same-origin requests and avoid CORS / build-time env issues.
+  async rewrites() {
+    const apiUrl = process.env.API_URL?.trim();
+    if (!apiUrl) return [];
+    const base = apiUrl.replace(/\/$/, '');
+    return [
+      {
+        source: '/api/v1/:path*',
+        destination: `${base}/api/v1/:path*`,
+      },
+    ];
+  },
 };
 
 module.exports = nextConfig;

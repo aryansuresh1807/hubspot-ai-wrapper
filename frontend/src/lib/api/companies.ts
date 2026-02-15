@@ -3,7 +3,7 @@
  */
 
 import { getAuthHeaders } from './activities';
-import { ApiClientError } from './client';
+import { ApiClientError, buildApiUrl } from './client';
 
 export interface CompanySearchResult {
   id: string;
@@ -33,38 +33,14 @@ export interface CompanyListResponse {
   companies: CompanySearchResult[];
 }
 
-const getBaseUrl = (): string => {
-  const raw = process.env.NEXT_PUBLIC_API_URL;
-  const apiUrl = typeof raw === 'string' ? raw.trim() : '';
-  if (!apiUrl) {
-    throw new Error(
-      'NEXT_PUBLIC_API_URL is not configured. Set it in your environment variables (e.g. http://localhost:8000).'
-    );
-  }
-  try {
-    new URL(apiUrl);
-  } catch {
-    throw new Error(
-      'NEXT_PUBLIC_API_URL must be a valid absolute URL (e.g. http://localhost:8000). Got: ' + JSON.stringify(raw)
-    );
-  }
-  return apiUrl.replace(/\/$/, '');
-};
-
 async function fetchApi<T>(
   path: string,
   init: RequestInit & { params?: Record<string, string> } = {}
 ): Promise<T> {
   const { params, ...requestInit } = init;
-  const base = getBaseUrl();
-  const url = new URL(path.startsWith('/') ? path : `/${path}`, base);
-  if (params) {
-    Object.entries(params).forEach(([key, value]) => {
-      if (value !== undefined) url.searchParams.set(key, value);
-    });
-  }
+  const url = buildApiUrl(path, params);
   const headers = await getAuthHeaders();
-  const res = await fetch(url.toString(), {
+  const res = await fetch(url, {
     ...requestInit,
     headers: { ...headers, ...requestInit.headers },
   });

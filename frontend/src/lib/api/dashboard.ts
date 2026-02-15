@@ -4,26 +4,8 @@
  */
 
 import { getAuthHeaders } from './activities';
-import { ApiClientError } from './client';
+import { ApiClientError, buildApiUrl } from './client';
 import type { DashboardState } from './types';
-
-const getBaseUrl = (): string => {
-  const raw = process.env.NEXT_PUBLIC_API_URL;
-  const apiUrl = typeof raw === 'string' ? raw.trim() : '';
-  if (!apiUrl) {
-    throw new Error(
-      'NEXT_PUBLIC_API_URL is not configured. Set it in your environment variables (e.g. http://localhost:8000).'
-    );
-  }
-  try {
-    new URL(apiUrl);
-  } catch {
-    throw new Error(
-      'NEXT_PUBLIC_API_URL must be a valid absolute URL (e.g. http://localhost:8000). Got: ' + JSON.stringify(raw)
-    );
-  }
-  return apiUrl.replace(/\/$/, '');
-};
 
 const DEFAULT_MAX_RETRIES = 3;
 const INITIAL_BACKOFF_MS = 500;
@@ -46,13 +28,12 @@ async function fetchWithRetry<T>(
   path: string,
   init: RequestInit = {}
 ): Promise<T> {
-  const base = getBaseUrl();
-  const url = new URL(path.startsWith('/') ? path : `/${path}`, base);
+  const url = buildApiUrl(path);
   let lastError: unknown;
   for (let attempt = 0; attempt < DEFAULT_MAX_RETRIES; attempt++) {
     try {
       const headers = await getAuthHeaders();
-      const res = await fetch(url.toString(), {
+      const res = await fetch(url, {
         ...init,
         headers: { ...headers, ...init.headers },
       });

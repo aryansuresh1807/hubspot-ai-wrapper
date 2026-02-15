@@ -1,9 +1,12 @@
 export {
   api,
   apiRequest,
+  getBaseUrl,
+  buildApiUrl,
   type ApiError,
   ApiClientError,
   type RequestConfig,
+  type ApiUrlParams,
 } from './client';
 
 export {

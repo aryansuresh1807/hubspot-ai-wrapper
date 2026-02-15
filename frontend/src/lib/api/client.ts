@@ -1,13 +1,26 @@
 /**
  * API client for the FastAPI backend.
- * Uses fetch with NEXT_PUBLIC_API_URL. For axios, swap this module implementation.
+ * - Local: uses NEXT_PUBLIC_API_URL (e.g. http://localhost:8000).
+ * - Deployed (Vercel): uses relative URLs so requests hit same origin and Next.js
+ *   rewrites /api/v1/* to the backend (set API_URL on Vercel). No CORS/build-time env issues.
  */
 
-const getBaseUrl = (): string => {
+const isLocalhost = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  const h = window.location?.hostname ?? '';
+  return h === 'localhost' || h === '127.0.0.1';
+};
+
+export function getBaseUrl(): string {
+  if (typeof window !== 'undefined' && !isLocalhost()) {
+    return '';
+  }
   const raw = process.env.NEXT_PUBLIC_API_URL;
   const apiUrl = typeof raw === 'string' ? raw.trim() : '';
   if (!apiUrl) {
-    throw new Error('NEXT_PUBLIC_API_URL is not configured. Please set it in your environment variables (e.g. http://localhost:8000).');
+    throw new Error(
+      'NEXT_PUBLIC_API_URL is not configured. For local dev set it (e.g. http://localhost:8000). For Vercel set API_URL to your Railway backend URL and redeploy.'
+    );
   }
   try {
     new URL(apiUrl);
@@ -17,7 +30,42 @@ const getBaseUrl = (): string => {
     );
   }
   return apiUrl.replace(/\/$/, '');
-};
+}
+
+/** Params for buildApiUrl: values can be scalar or array (for repeated query keys). */
+export type ApiUrlParams = Record<
+  string,
+  string | string[] | number | boolean | undefined
+>;
+
+/**
+ * Build the full or relative URL for an API request. When base is '' (deployed with proxy),
+ * returns a relative path so the request is rewritten to the backend by Next.js.
+ * Supports array params (appends multiple values for the same key).
+ */
+export function buildApiUrl(path: string, params?: ApiUrlParams): string {
+  const base = getBaseUrl();
+  const pathStr = path.startsWith('/') ? path : `/${path}`;
+  if (!base) {
+    if (!params || !Object.keys(params).length) return pathStr;
+    const search = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === undefined) return;
+      if (Array.isArray(value)) value.forEach((v) => search.append(key, String(v)));
+      else search.set(key, String(value));
+    });
+    return pathStr + '?' + search.toString();
+  }
+  const url = new URL(pathStr, base);
+  if (params) {
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === undefined) return;
+      if (Array.isArray(value)) value.forEach((v) => url.searchParams.append(key, String(v)));
+      else url.searchParams.set(key, String(value));
+    });
+  }
+  return url.toString();
+}
 
 export type ApiError = {
   detail: string | Record<string, unknown>;
@@ -61,21 +109,15 @@ export type RequestConfig = RequestInit & {
 };
 
 /**
- * Request to the backend API. Automatically prefixes path with NEXT_PUBLIC_API_URL.
+ * Request to the backend API. Uses getBaseUrl() or relative path (when deployed with API_URL proxy).
  */
 export async function apiRequest<T = unknown>(
   path: string,
   config: RequestConfig = {}
 ): Promise<T> {
   const { params, ...init } = config;
-  const base = getBaseUrl();
-  const url = new URL(path.startsWith('/') ? path : `/${path}`, base);
-  if (params) {
-    Object.entries(params).forEach(([key, value]) => {
-      if (value !== undefined) url.searchParams.set(key, String(value));
-    });
-  }
-  const res = await fetch(url.toString(), {
+  const url = buildApiUrl(path, params);
+  const res = await fetch(url, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
