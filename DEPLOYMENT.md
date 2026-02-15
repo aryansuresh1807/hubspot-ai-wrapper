@@ -33,12 +33,19 @@ When the app is **not** on localhost, the client sends API requests to the **sam
 
    | Variable | Required | Example / notes |
    |----------|----------|------------------|
-   | **`API_URL`** | **Yes (for production)** | Your **Railway backend URL**, e.g. `https://hubspot-ai-wrapper-production.up.railway.app` (no trailing slash). Used by Next.js to proxy `/api/v1/*` to the backend. |
+   | **`API_URL`** or **`NEXT_PUBLIC_API_URL`** | **Yes (for production)** | Your **Railway backend URL**, e.g. `https://hubspot-ai-wrapper-production.up.railway.app` (no trailing slash). Next.js rewrites use whichever is set at **build time** to proxy `/api/v1/*` and `/backend-health`. Set at least one; use a single URL (no space or duplicate). |
    | `NEXT_PUBLIC_SUPABASE_URL` | Yes | `https://xxx.supabase.co` |
    | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | From Supabase project settings |
-   | `NEXT_PUBLIC_API_URL` | Local only | Only needed for **local dev** (e.g. `http://localhost:8000`). Not required on Vercel when using `API_URL` proxy. |
+   | `NEXT_PUBLIC_API_URL` | Optional on Vercel | For **local dev** set to `http://localhost:8000`. On Vercel, if set, it is also used for rewrites so the proxy works even if `API_URL` is not set. |
 
 3. **Redeploy** after setting or changing `API_URL`.
+
+4. **If the frontend can’t reach the backend:**  
+   - **Rewrites use `API_URL` or `NEXT_PUBLIC_API_URL`** at **build time**. Set at least one in Vercel (Production and Preview if you use preview deploys). No spaces or trailing slash.  
+   - **Redeploy the frontend** after changing either variable — rewrites are baked in at build time.  
+   - In the browser, requests must go to **your Vercel domain** (e.g. `https://your-app.vercel.app/api/v1/...`), not directly to Railway. The client uses same-origin URLs when not on localhost.  
+   - After using the app (search, dashboard), Railway deploy logs should show `INFO:     GET /api/v1/... -> 200`. If you only see “Application startup complete” and no request lines, traffic is not reaching Railway — fix rewrites (env + redeploy) and/or check Vercel function logs for proxy errors.  
+   - **Quick proxy check:** Open `https://your-frontend.vercel.app/backend-health` in the browser. You should get `{"status":"healthy"}` from the backend. If you get 404, rewrites are not active (wrong or missing env at build, or no redeploy).
 
 ---
 
@@ -51,7 +58,8 @@ When the app is **not** on localhost, the client sends API requests to the **sam
 
 ## Quick checklist
 
-- [ ] Railway: All backend env vars set; `CORS_ORIGINS` includes your Vercel URL.
-- [ ] Vercel: **`API_URL`** = Railway backend URL (e.g. `https://xxx.up.railway.app`); Supabase vars set.
-- [ ] Redeploy frontend after changing `API_URL`.
-- [ ] If you see no request logs on Railway: ensure `API_URL` is set on Vercel and you redeployed so the proxy is active.
+- [ ] Railway: All backend env vars set; `CORS_ORIGINS` includes your Vercel URL (e.g. `https://hubspot-ai-wrapper-frontend.vercel.app`). Startup logs should show `CORS_ORIGINS=...`.
+- [ ] Vercel: **`API_URL`** and/or **`NEXT_PUBLIC_API_URL`** = **single** Railway URL (e.g. `https://xxx.up.railway.app`), no trailing slash; Supabase vars set. Env must exist for the environment you deploy (Production / Preview).
+- [ ] Redeploy frontend after changing either URL variable (rewrites are built at deploy time).
+- [ ] Verify proxy: Open `https://your-app.vercel.app/backend-health` → should return `{"status":"healthy"}`.
+- [ ] Verify traffic: Use the app (search, dashboard). Railway logs should show `INFO:     GET /api/v1/... -> 200`. If you see no request lines, rewrites are not active — fix env and redeploy.

@@ -4,6 +4,7 @@ CORS, API versioning (/api/v1), health check, error handling.
 """
 
 import logging
+import sys
 from contextlib import asynccontextmanager
 from typing import Callable
 
@@ -17,10 +18,27 @@ from app.api.v1.endpoints import auth
 from app.api.v1.routes import api_router
 from app.core.config import get_settings
 
+# Ensure app logs (including request logs) appear in Railway/deploy logs
+_log_handler = logging.StreamHandler(sys.stdout)
+_log_handler.setLevel(logging.INFO)
+_log_handler.setFormatter(logging.Formatter("%(levelname)s:     %(message)s"))
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    logger.addHandler(_log_handler)
+logger.propagate = True
 
 # Load settings once at import so CORS list is available to middleware
 _settings = get_settings()
+
+
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    """Log every request (method + path) so production (e.g. Railway) shows traffic in deploy logs."""
+
+    async def dispatch(self, request: StarletteRequest, call_next: Callable) -> Response:
+        response = await call_next(request)
+        logger.info("%s %s -> %s", request.method, request.url.path, response.status_code)
+        return response
 
 
 class PreflightCorsMiddleware(BaseHTTPMiddleware):
@@ -52,6 +70,7 @@ class PreflightCorsMiddleware(BaseHTTPMiddleware):
 async def lifespan(app: FastAPI):
     """Startup/shutdown lifecycle."""
     logger.info("Starting HubSpot AI Wrapper API")
+    logger.info("CORS_ORIGINS=%s", _settings.cors_origins)
     yield
     logger.info("Shutting down")
 
@@ -63,6 +82,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Request logging (so Railway/deploy logs show API traffic)
+app.add_middleware(RequestLoggingMiddleware)
 # CORS: preflight first (runs first), then general CORS for all responses
 app.add_middleware(PreflightCorsMiddleware)
 app.add_middleware(

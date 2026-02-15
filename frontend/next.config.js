@@ -6,17 +6,27 @@ const nextConfig = {
     ignoreBuildErrors: true,
   },
 
-  // When API_URL is set (e.g. on Vercel), proxy /api/v1/* to the backend so the client
-  // can use same-origin requests and avoid CORS / build-time env issues.
+  // Proxy API requests to the backend (Railway). Uses API_URL or NEXT_PUBLIC_API_URL
+  // so rewrites work on Vercel build (either var is available at build time).
+  // Client uses same-origin /api/v1/* so no CORS; Next.js rewrites to backend.
   async rewrites() {
-    const apiUrl = process.env.API_URL?.trim();
-    if (!apiUrl) return [];
-    const base = apiUrl.replace(/\/$/, '');
+    const raw = (process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || '').trim();
+    if (!raw) return [];
+    const firstUrl = raw.split(/\s+/)[0]?.trim();
+    if (!firstUrl) return [];
+    const base = firstUrl.replace(/\/$/, '');
+    try {
+      new URL(base);
+    } catch {
+      return [];
+    }
     return [
       {
         source: '/api/v1/:path*',
         destination: `${base}/api/v1/:path*`,
       },
+      // So frontend can ping backend health via same origin (e.g. fetch('/backend-health'))
+      { source: '/backend-health', destination: `${base}/health` },
     ];
   },
 };
