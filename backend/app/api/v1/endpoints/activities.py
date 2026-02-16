@@ -233,7 +233,7 @@ def _today_yyyymmdd() -> str:
 
 
 @router.get(
-    "/",
+    "",
     response_model=ActivityListResponse,
     summary="List activities",
     description="List activities with optional filters and sort. Uses cache if fresh (5 min), else syncs from HubSpot. Default date filter is today.",
