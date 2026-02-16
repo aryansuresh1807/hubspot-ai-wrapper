@@ -38,9 +38,13 @@ When the app is **not** on localhost, the client sends API requests to the **sam
    | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | From Supabase project settings |
    | `NEXT_PUBLIC_API_URL` | Optional on Vercel | For **local dev** set to `http://localhost:8000`. On Vercel, if set, it is also used for rewrites so the proxy works even if `API_URL` is not set. |
 
-3. **Redeploy** after setting or changing `API_URL`.
+   **Important:** Add `API_URL` and/or `NEXT_PUBLIC_API_URL` for **every environment** you use: **Production** and **Preview**. Preview builds (e.g. from a branch) only get Preview env vars; if the backend URL is set only for Production, rewrites will be empty and the frontend will not reach the backend. When in doubt, set the same values for Production, Preview, and Development.
 
-4. **If the frontend can’t reach the backend:**  
+3. **Build command:** Leave the build command as **`npm run build`** (or leave default). Do not use a custom command that exits with an error on production (e.g. `if [ "$VERCEL_ENV" == "production" ]; then exit 1; fi`) or rewrites will not be applied.
+
+4. **Redeploy** after setting or changing `API_URL`.
+
+5. **If the frontend can’t reach the backend:**  
    - **Rewrites use `API_URL` or `NEXT_PUBLIC_API_URL`** at **build time**. Set at least one in Vercel (Production and Preview if you use preview deploys). No spaces or trailing slash.  
    - **Redeploy the frontend** after changing either variable — rewrites are baked in at build time.  
    - In the browser, requests must go to **your Vercel domain** (e.g. `https://your-app.vercel.app/api/v1/...`), not directly to Railway. The client uses same-origin URLs when not on localhost.  
