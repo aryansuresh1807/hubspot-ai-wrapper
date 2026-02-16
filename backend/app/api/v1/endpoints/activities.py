@@ -4,6 +4,7 @@ List, get, create, update, delete, complete, force-sync, process-notes, submit.
 """
 
 import logging
+import re
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
@@ -57,6 +58,15 @@ HS_PRIORITY = "hs_task_priority"
 HS_TYPE = "hs_task_type"
 
 
+def _normalize_notes_body(body: str) -> str:
+    """Ensure each note (MM/DD/YY - ...) is separated by a blank line for readability."""
+    if not body or not body.strip():
+        return body.strip() if body else ""
+    parts = re.split(r"(?=\d{2}/\d{2}/\d{2} - )", body)
+    parts = [p.strip() for p in parts if p.strip()]
+    return "\n\n".join(parts)
+
+
 def _parse_ts(value: str | int | None) -> datetime | None:
     """Parse HubSpot timestamp: milliseconds since epoch or ISO 8601 string."""
     if value is None:
@@ -96,12 +106,14 @@ def _hubspot_task_to_activity(task: dict[str, Any]) -> dict[str, Any]:
         contact_ids = [a.get("id") for a in assoc.get("contacts", {}).get("results", []) if a.get("id")]
         company_ids = [a.get("id") for a in assoc.get("companies", {}).get("results", []) if a.get("id")]
 
+    raw_body = (props.get(HS_BODY) or "").strip()
+    body = _normalize_notes_body(raw_body) if raw_body else None
     return {
         "id": tid,
         "hubspot_id": tid,
         "type": props.get(HS_TYPE) or None,
         "subject": props.get(HS_SUBJECT) or None,
-        "body": props.get(HS_BODY) or None,
+        "body": body,
         "due_date": due,
         "completed": completed,
         "contact_ids": contact_ids,
@@ -796,7 +808,7 @@ async def create_and_submit_activity(
         else:
             activity_dt = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         date_prefix = activity_dt.strftime("%m/%d/%y")
-        new_body = f"{date_prefix} - {body.meeting_notes.strip()}"
+        new_body = _normalize_notes_body(f"{date_prefix} - {body.meeting_notes.strip()}")
 
         # Due date = task due date in HubSpot. Default today.
         if body.due_date and body.due_date.strip():
@@ -923,7 +935,8 @@ async def submit_activity(
             activity_dt = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         date_prefix = activity_dt.strftime("%m/%d/%y")
         new_note_line = f"{date_prefix} - {body.meeting_notes.strip()}"
-        new_body = new_note_line + ("\n\n" + existing_body if existing_body else "")
+        normalized_existing = _normalize_notes_body(existing_body) if existing_body else ""
+        new_body = new_note_line + ("\n\n" + normalized_existing if normalized_existing else "")
 
         # Task due date in HubSpot (HS_TIMESTAMP). Use due_date if provided, else today.
         if body.due_date and body.due_date.strip():
