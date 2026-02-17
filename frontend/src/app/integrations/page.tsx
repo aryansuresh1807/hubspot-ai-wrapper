@@ -7,9 +7,6 @@ import {
   Mail,
   ChevronDown,
   ChevronUp,
-  Eye,
-  EyeOff,
-  Copy,
   Check,
   Loader2,
   Activity,
@@ -17,7 +14,6 @@ import {
 import { Skeleton } from '@/components/shared/skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -34,6 +30,7 @@ import {
   ToastClose,
 } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
+import { disconnectGmail, getGmailConnectUrl, getGmailStatus } from '@/lib/api/integrations';
 
 // ---------------------------------------------------------------------------
 // Types & mock data
@@ -139,10 +136,6 @@ export default function IntegrationsPage(): React.ReactElement {
     return () => clearTimeout(t);
   }, []);
   const [expandedSettings, setExpandedSettings] = React.useState<IntegrationId | null>(null);
-  const [apiKeyVisible, setApiKeyVisible] = React.useState<Record<IntegrationId, boolean>>({
-    hubspot: false,
-    email: false,
-  });
   const [testLoading, setTestLoading] = React.useState<IntegrationId | null>(null);
   const [syncLogFilter, setSyncLogFilter] = React.useState<'all' | SyncStatus>('all');
   const [syncLogPage, setSyncLogPage] = React.useState(0);
@@ -152,25 +145,16 @@ export default function IntegrationsPage(): React.ReactElement {
     title: string;
     description?: string;
   }>({ open: false, variant: 'default', title: '' });
-  const [copiedId, setCopiedId] = React.useState<string | null>(null);
+  const [gmailStatus, setGmailStatus] = React.useState<{
+    connected: boolean | null;
+    email: string | null;
+    last_connected_at: string | null;
+  }>({ connected: null, email: null, last_connected_at: null });
+  const gmailConnected = gmailStatus.connected;
+  const [gmailActionLoading, setGmailActionLoading] = React.useState(false);
 
   const showToast = (variant: 'success' | 'error', title: string, description?: string) => {
     setToast({ open: true, variant, title, description });
-  };
-
-  const copyToClipboard = async (text: string, id: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 2000);
-      showToast('success', 'Copied to clipboard');
-    } catch {
-      showToast('error', 'Failed to copy');
-    }
-  };
-
-  const toggleApiKeyVisibility = (id: IntegrationId) => {
-    setApiKeyVisible((p) => ({ ...p, [id]: !p[id] }));
   };
 
   const handleTestConnection = async (id: IntegrationId) => {
@@ -184,6 +168,73 @@ export default function IntegrationsPage(): React.ReactElement {
     setTestLoading(null);
   };
 
+  // Fetch Gmail status on mount so the Email Inbox tile shows correct status
+  React.useEffect(() => {
+    let cancelled = false;
+    getGmailStatus()
+      .then((data) => {
+        if (!cancelled) {
+          setGmailStatus({
+            connected: data.connected,
+            email: data.connected && data.email ? data.email : null,
+            last_connected_at: data.connected && data.last_connected_at ? data.last_connected_at : null,
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setGmailStatus({ connected: false, email: null, last_connected_at: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Re-fetch Gmail status when user expands the Email Inbox section (e.g. after connecting)
+  React.useEffect(() => {
+    if (expandedSettings !== 'email') return;
+    let cancelled = false;
+    getGmailStatus()
+      .then((data) => {
+        if (!cancelled) {
+          setGmailStatus({
+            connected: data.connected,
+            email: data.connected && data.email ? data.email : null,
+            last_connected_at: data.connected && data.last_connected_at ? data.last_connected_at : null,
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setGmailStatus({ connected: false, email: null, last_connected_at: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [expandedSettings]);
+
+  const handleConnectGmail = async () => {
+    setGmailActionLoading(true);
+    try {
+      const { url } = await getGmailConnectUrl();
+      window.location.href = url;
+    } catch {
+      showToast('error', 'Failed to start Gmail connection');
+      setGmailActionLoading(false);
+    }
+  };
+
+  const handleDisconnectGmail = async () => {
+    setGmailActionLoading(true);
+    try {
+      await disconnectGmail();
+      setGmailStatus({ connected: false, email: null, last_connected_at: null });
+      showToast('success', 'Gmail disconnected');
+    } catch {
+      showToast('error', 'Failed to disconnect Gmail');
+    } finally {
+      setGmailActionLoading(false);
+    }
+  };
+
   const filteredLog = React.useMemo(() => {
     const list = syncLogFilter === 'all' ? MOCK_SYNC_LOG : MOCK_SYNC_LOG.filter((e) => e.status === syncLogFilter);
     return list;
@@ -192,9 +243,6 @@ export default function IntegrationsPage(): React.ReactElement {
   const PAGE_SIZE = 3;
   const totalPages = Math.ceil(filteredLog.length / PAGE_SIZE) || 1;
   const paginatedLog = filteredLog.slice(syncLogPage * PAGE_SIZE, (syncLogPage + 1) * PAGE_SIZE);
-
-  const mockApiKey = 'sk_live_••••••••••••••••••••••••';
-  const mockWebhookUrl = 'https://api.example.com/webhooks/hubspot';
 
   return (
     <ProtectedRoute>
@@ -219,6 +267,13 @@ export default function IntegrationsPage(): React.ReactElement {
           ) : (
             INTEGRATIONS.map((int) => {
               const Icon = int.icon;
+              const isEmail = int.id === 'email';
+              const tileStatus =
+                isEmail && gmailConnected !== null
+                  ? gmailConnected
+                    ? 'connected'
+                    : 'disconnected'
+                  : int.status;
               return (
                 <Card key={int.id} className="overflow-hidden shadow-card">
                   <div className={cn('p-6 flex items-center justify-center', int.brandBg)}>
@@ -230,16 +285,24 @@ export default function IntegrationsPage(): React.ReactElement {
                       <span
                         className={cn(
                           'text-xs font-medium px-2 py-0.5 rounded-full',
-                          int.status === 'connected'
+                          tileStatus === 'connected'
                             ? 'bg-status-warm/15 text-status-warm'
                             : 'bg-muted text-muted-foreground'
                         )}
                       >
-                        {int.status === 'connected' ? 'Connected' : 'Disconnected'}
+                        {isEmail && gmailConnected === null
+                          ? 'Checking…'
+                          : tileStatus === 'connected'
+                            ? 'Connected'
+                            : 'Disconnected'}
                       </span>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Last sync: {formatTimestamp(int.lastSync)}
+                      {isEmail
+                        ? gmailStatus.last_connected_at
+                          ? `Last connected: ${formatTimestamp(gmailStatus.last_connected_at)}`
+                          : 'Last connected: —'
+                        : `Last sync: ${formatTimestamp(int.lastSync)}`}
                     </p>
                   </CardContent>
                 </Card>
@@ -271,68 +334,42 @@ export default function IntegrationsPage(): React.ReactElement {
                 </button>
                 {isExpanded && (
                   <CardContent className="pt-0 pb-4 space-y-4 border-t">
-                    {int.id !== 'hubspot' && (
-                      <>
-                        <div className="pt-4 space-y-2">
-                          <Label>API Key</Label>
-                          <div className="flex gap-2">
-                            <Input
-                              type={apiKeyVisible[int.id] ? 'text' : 'password'}
-                              value={mockApiKey}
-                              readOnly
-                              className="font-mono text-sm"
-                            />
+                    {int.id === 'email' && (
+                      <div className={cn('flex flex-wrap items-center gap-3', 'pt-4')}>
+                        {gmailConnected === null ? (
+                          <span className="text-sm text-muted-foreground">Checking Gmail…</span>
+                        ) : gmailConnected ? (
+                          <>
+                            <span className="flex items-center gap-1.5 text-sm text-status-warm">
+                              <Check className="h-4 w-4" />
+                              {gmailStatus.email
+                                ? `Gmail connected: ${gmailStatus.email}`
+                                : 'Gmail connected'}
+                            </span>
                             <Button
                               variant="outline"
-                              size="icon"
-                              onClick={() => toggleApiKeyVisibility(int.id)}
-                              aria-label={apiKeyVisible[int.id] ? 'Hide' : 'Show'}
+                              size="sm"
+                              onClick={handleDisconnectGmail}
+                              disabled={gmailActionLoading}
+                              className="gap-2"
                             >
-                              {apiKeyVisible[int.id] ? (
-                                <EyeOff className="h-4 w-4" />
-                              ) : (
-                                <Eye className="h-4 w-4" />
-                              )}
+                              {gmailActionLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+                              Disconnect
                             </Button>
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              onClick={() => copyToClipboard(mockApiKey, `api-${int.id}`)}
-                              aria-label="Copy"
-                            >
-                              {copiedId === `api-${int.id}` ? (
-                                <Check className="h-4 w-4 text-status-warm" />
-                              ) : (
-                                <Copy className="h-4 w-4" />
-                              )}
-                            </Button>
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          <Label>Webhook URL</Label>
-                          <div className="flex gap-2">
-                            <Input
-                              value={mockWebhookUrl}
-                              readOnly
-                              className="font-mono text-sm bg-muted/50"
-                            />
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              onClick={() => copyToClipboard(mockWebhookUrl, `webhook-${int.id}`)}
-                              aria-label="Copy"
-                            >
-                              {copiedId === `webhook-${int.id}` ? (
-                                <Check className="h-4 w-4 text-status-warm" />
-                              ) : (
-                                <Copy className="h-4 w-4" />
-                              )}
-                            </Button>
-                          </div>
-                        </div>
-                      </>
+                          </>
+                        ) : (
+                          <Button
+                            onClick={handleConnectGmail}
+                            disabled={gmailActionLoading}
+                            className="gap-2"
+                          >
+                            {gmailActionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                            Connect Gmail
+                          </Button>
+                        )}
+                      </div>
                     )}
-                    <div className={cn('flex items-center gap-3', int.id === 'hubspot' && 'pt-4')}>
+                    <div className={cn('flex items-center gap-3', (int.id === 'hubspot' || int.id === 'email') && 'pt-4')}>
                       <Button
                         onClick={() => handleTestConnection(int.id)}
                         disabled={testLoading !== null}
@@ -343,7 +380,7 @@ export default function IntegrationsPage(): React.ReactElement {
                         ) : null}
                         Test Connection
                       </Button>
-                      {int.status === 'connected' && (
+                      {(int.id === 'email' ? gmailConnected : int.status === 'connected') && (
                         <span className="flex items-center gap-1.5 text-sm text-status-warm">
                           <span className="h-2 w-2 rounded-full bg-status-warm" />
                           Active

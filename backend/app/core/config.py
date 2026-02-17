@@ -79,7 +79,13 @@ class Settings(BaseSettings):
     frontend_url: str = Field(
         default="http://localhost:3000",
         description="Frontend app URL for CORS and links",
+        validation_alias="FRONTEND_URL",
     )
+
+    # Google OAuth (Gmail)
+    google_client_id: str = Field(default="", description="Google OAuth client ID", validation_alias="GOOGLE_CLIENT_ID")
+    google_client_secret: str = Field(default="", description="Google OAuth client secret", validation_alias="GOOGLE_CLIENT_SECRET")
+    google_redirect_uri: str = Field(default="", description="Google OAuth redirect URI (backend callback)", validation_alias="GOOGLE_REDIRECT_URI")
 
     @property
     def cors_origins_list(self) -> List[str]:

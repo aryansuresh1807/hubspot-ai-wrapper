@@ -1,12 +1,15 @@
 """
-Auth API: signup, signin, signout, me, password reset/update.
+Auth API: signup, signin, signout, me, password reset/update, Gmail OAuth.
 """
 
+import base64
 import logging
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import RedirectResponse
 
+from app.core.config import get_settings
 from app.core.security import get_current_user, get_current_user_id
 from app.schemas.auth import (
     AuthResponse,
@@ -185,3 +188,170 @@ async def update_password(
         message="Password updated successfully",
         success=True,
     )
+
+
+# ---------------------------------------------------------------------------
+# Gmail OAuth
+# ---------------------------------------------------------------------------
+
+GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+
+
+@router.get("/gmail/status")
+async def gmail_status(
+    user_id: str = Depends(get_current_user_id),
+    supabase: SupabaseService = Depends(get_supabase_service),
+):
+    """Return whether the current user has Gmail connected, their email (from DB), and last_connected_at."""
+    tokens = await supabase.get_gmail_tokens(user_id)
+    if not tokens:
+        return {"connected": False}
+
+    email = tokens.get("email")
+    last_connected_at = tokens.get("last_connected_at")
+    # If email was never stored (e.g. before we added the column), try Gmail API once
+    if not email:
+        try:
+            from app.services.gmail_service import get_gmail_client
+            service = await get_gmail_client(user_id, supabase)
+            if service:
+                profile = service.users().getProfile(userId="me").execute()
+                email = profile.get("emailAddress")
+        except Exception as e:
+            logger.debug("Gmail profile fetch for status: %s", e)
+    return {
+        "connected": True,
+        "email": email,
+        "last_connected_at": last_connected_at,
+    }
+
+
+@router.get("/gmail")
+async def gmail_connect(
+    user_id: str = Depends(get_current_user_id),
+    supabase: SupabaseService = Depends(get_supabase_service),
+):
+    """
+    Generate Google OAuth URL for Gmail and return it.
+    Frontend should redirect the user to this URL.
+    """
+    from google_auth_oauthlib.flow import Flow
+
+    settings = get_settings()
+    if not settings.google_client_id or not settings.google_client_secret or not settings.google_redirect_uri:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Gmail integration is not configured",
+        )
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": settings.google_client_id,
+                "client_secret": settings.google_client_secret,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": [settings.google_redirect_uri],
+            }
+        },
+        scopes=[GMAIL_SCOPE],
+    )
+    flow.redirect_uri = settings.google_redirect_uri
+    authorization_url, _ = flow.authorization_url(
+        access_type="offline",
+        prompt="consent",
+        state=base64.urlsafe_b64encode(user_id.encode()).decode(),
+    )
+    return {"url": authorization_url}
+
+
+@router.get("/gmail/callback")
+async def gmail_callback(
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    supabase: SupabaseService = Depends(get_supabase_service),
+):
+    """
+    Google OAuth callback. Exchange code for tokens, save to DB, redirect to frontend.
+    """
+    from datetime import datetime, timezone
+
+    from google_auth_oauthlib.flow import Flow
+
+    settings = get_settings()
+    frontend_url = (settings.frontend_url or "").strip().rstrip("/")
+    if not frontend_url:
+        frontend_url = "http://localhost:3000"
+
+    if error:
+        logger.warning("Gmail OAuth error: %s", error)
+        return RedirectResponse(url=f"{frontend_url}/integrations?gmail_error=1", status_code=302)
+
+    if not code or not state:
+        return RedirectResponse(url=f"{frontend_url}/integrations?gmail_error=2", status_code=302)
+
+    try:
+        user_id = base64.urlsafe_b64decode(state.encode()).decode()
+    except Exception:
+        logger.warning("Invalid state in Gmail callback")
+        return RedirectResponse(url=f"{frontend_url}/integrations?gmail_error=3", status_code=302)
+
+    if not settings.google_client_id or not settings.google_client_secret or not settings.google_redirect_uri:
+        return RedirectResponse(url=f"{frontend_url}/integrations?gmail_error=4", status_code=302)
+
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": settings.google_client_id,
+                "client_secret": settings.google_client_secret,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": [settings.google_redirect_uri],
+            }
+        },
+        scopes=[GMAIL_SCOPE],
+    )
+    flow.redirect_uri = settings.google_redirect_uri
+    try:
+        flow.fetch_token(code=code)
+    except Exception as e:
+        logger.exception("Gmail fetch_token failed: %s", e)
+        return RedirectResponse(url=f"{frontend_url}/integrations?gmail_error=5", status_code=302)
+
+    credentials = flow.credentials
+    token_expiry = None
+    if credentials.expiry:
+        token_expiry = credentials.expiry
+        if token_expiry.tzinfo is None:
+            token_expiry = token_expiry.replace(tzinfo=timezone.utc)
+
+    # Fetch Gmail profile email so we can store it (no extra API call needed later)
+    gmail_email = None
+    try:
+        from googleapiclient.discovery import build
+        service = build("gmail", "v1", credentials=credentials)
+        profile = service.users().getProfile(userId="me").execute()
+        gmail_email = profile.get("emailAddress")
+    except Exception as e:
+        logger.warning("Could not fetch Gmail profile for email: %s", e)
+
+    now_utc = datetime.now(timezone.utc)
+    await supabase.upsert_gmail_tokens(
+        user_id=user_id,
+        access_token=credentials.token or "",
+        refresh_token=credentials.refresh_token,
+        token_expiry=token_expiry,
+        last_connected_at=now_utc,
+        email=gmail_email,
+    )
+    return RedirectResponse(url=f"{frontend_url}/integrations", status_code=302)
+
+
+@router.delete("/gmail")
+async def gmail_disconnect(
+    user_id: str = Depends(get_current_user_id),
+    supabase: SupabaseService = Depends(get_supabase_service),
+):
+    """Remove Gmail tokens for the current user."""
+    await supabase.delete_gmail_tokens(user_id)
+    return MessageResponse(message="Gmail disconnected", success=True)

@@ -541,6 +541,80 @@ class SupabaseService:
                 detail="Failed to update dashboard state",
             )
 
+    # -------------------------------------------------------------------------
+    # Gmail OAuth tokens (gmail_tokens table)
+    # -------------------------------------------------------------------------
+
+    async def get_gmail_tokens(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Return Gmail tokens for user, or None if not connected."""
+        try:
+            response = (
+                self.client.table("gmail_tokens")
+                .select("access_token, refresh_token, token_expiry, last_connected_at, email")
+                .eq("user_id", user_id)
+                .limit(1)
+                .execute()
+            )
+            if response.data and len(response.data) > 0:
+                return response.data[0]
+            return None
+        except Exception as e:
+            logger.error("Get Gmail tokens error: %s", str(e))
+            return None
+
+    async def upsert_gmail_tokens(
+        self,
+        user_id: str,
+        access_token: str,
+        refresh_token: Optional[str] = None,
+        token_expiry: Optional[datetime] = None,
+        last_connected_at: Optional[datetime] = None,
+        email: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Insert or update Gmail tokens for user. Pass last_connected_at and email when user completes OAuth connect."""
+        try:
+            now = datetime.now(timezone.utc)
+            row: Dict[str, Any] = {
+                "user_id": user_id,
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "updated_at": now.isoformat().replace("+00:00", "Z"),
+            }
+            if token_expiry is not None:
+                row["token_expiry"] = token_expiry.isoformat().replace("+00:00", "Z")
+            if last_connected_at is not None:
+                row["last_connected_at"] = last_connected_at.isoformat().replace("+00:00", "Z")
+            if email is not None:
+                row["email"] = email
+            response = (
+                self.client.table("gmail_tokens")
+                .upsert(row, on_conflict="user_id")
+                .execute()
+            )
+            if response.data and len(response.data) > 0:
+                return response.data[0]
+            return row
+        except Exception as e:
+            logger.error("Upsert Gmail tokens error: %s", str(e))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to save Gmail tokens",
+            )
+
+    async def delete_gmail_tokens(self, user_id: str) -> bool:
+        """Remove Gmail tokens for user. Returns True if deleted."""
+        try:
+            response = (
+                self.client.table("gmail_tokens")
+                .delete()
+                .eq("user_id", user_id)
+                .execute()
+            )
+            return bool(response.data)
+        except Exception as e:
+            logger.error("Delete Gmail tokens error: %s", str(e))
+            return False
+
 
 def get_supabase_service() -> SupabaseService:
     """Dependency for FastAPI."""
