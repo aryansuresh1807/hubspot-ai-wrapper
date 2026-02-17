@@ -9,14 +9,12 @@ import {
   AlertTriangle,
   RotateCw,
   Mail,
-  FileText,
   User,
   UserPlus,
   Building2,
   Loader2,
   Check,
   Search,
-  MessageSquare,
   CalendarIcon,
   RefreshCw,
   CheckCircle2,
@@ -153,12 +151,6 @@ const MOCK_EMAILS = [
   { id: 'e1', subject: 'Q1 follow-up and proposal review', from: 'jane@acme.com', date: 'Feb 5, 2025', preview: 'Thanks for the call today. Please send the proposal by end of week.' },
   { id: 'e2', subject: 'Re: Implementation timeline', from: 'robert@globex.com', date: 'Feb 4, 2025', preview: 'Can we schedule a follow-up to discuss the implementation details?' },
   { id: 'e3', subject: 'Intro - Wayne Industries', from: 'leslie@wayne.com', date: 'Feb 3, 2025', preview: 'Hi, connecting you with the team regarding the project scope.' },
-];
-
-const MOCK_TEXTS = [
-  { id: 't1', from: 'Jane Cooper', date: 'Feb 6, 2025', preview: 'Can you send the proposal draft by Wednesday? Would love to review before our call.' },
-  { id: 't2', from: 'Robert Fox', date: 'Feb 5, 2025', preview: 'Thanks for the update. Let me know when the contract is ready for signature.' },
-  { id: 't3', from: 'Leslie Alexander', date: 'Feb 4, 2025', preview: 'Quick question about the support SLA — can we go over it on the next call?' },
 ];
 
 const ACTIVITY_TYPES = [
@@ -454,11 +446,8 @@ function ActivityPageContent(): React.ReactElement {
   const [activityType, setActivityType] = React.useState<string>('');
   const [activityOutcome, setActivityOutcome] = React.useState<string>('');
   const [emailImportQuery, setEmailImportQuery] = React.useState('');
-  const [textImportQuery, setTextImportQuery] = React.useState('');
   const [emailImportFocused, setEmailImportFocused] = React.useState(false);
-  const [textImportFocused, setTextImportFocused] = React.useState(false);
   const emailImportRef = React.useRef<HTMLDivElement>(null);
-  const textImportRef = React.useRef<HTMLDivElement>(null);
   const [activityDate, setActivityDate] = React.useState(() => format(new Date(), 'yyyy-MM-dd'));
   const [dueDate, setDueDate] = React.useState('');
   const [recognisedDate, setRecognisedDate] = React.useState<{ date: string | null; label: string | null; confidence: number }>({ date: null, label: null, confidence: 0 });
@@ -607,9 +596,6 @@ function ActivityPageContent(): React.ReactElement {
       if (emailImportRef.current && !emailImportRef.current.contains(e.target as Node)) {
         setEmailImportFocused(false);
       }
-      if (textImportRef.current && !textImportRef.current.contains(e.target as Node)) {
-        setTextImportFocused(false);
-      }
       if (contactRef.current && !contactRef.current.contains(e.target as Node)) {
         setContactFocused(false);
       }
@@ -631,15 +617,6 @@ function ActivityPageContent(): React.ReactElement {
         e.preview.toLowerCase().includes(q)
     );
   }, [emailImportQuery]);
-
-  const filteredTexts = React.useMemo(() => {
-    const q = textImportQuery.trim().toLowerCase();
-    if (!q) return MOCK_TEXTS;
-    return MOCK_TEXTS.filter(
-      (t) =>
-        t.from.toLowerCase().includes(q) || t.preview.toLowerCase().includes(q)
-    );
-  }, [textImportQuery]);
 
   const debouncedContactQuery = useDebouncedValue(contactSearch.trim(), DEBOUNCE_MS);
   const debouncedAccountQuery = useDebouncedValue(accountSearch.trim(), DEBOUNCE_MS);
@@ -933,61 +910,6 @@ function ActivityPageContent(): React.ReactElement {
                   <Button variant="secondary" size="sm" className="gap-1 shrink-0">
                     <Mail className="h-4 w-4" />
                     Generate Note from Email
-                  </Button>
-                )}
-              </div>
-            </div>
-            <div ref={textImportRef} className="relative">
-              <Label className="text-sm text-muted-foreground flex items-center gap-1.5">
-                <MessageSquare className="h-4 w-4" />
-                Text Messages
-              </Label>
-              <div className="flex gap-2 mt-1">
-                <div className="relative flex-1">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-                  <Input
-                    value={textImportQuery}
-                    onChange={(e) => setTextImportQuery(e.target.value)}
-                    onFocus={() => setTextImportFocused(true)}
-                    placeholder="Search text messages..."
-                    className="pl-8"
-                  />
-                  {(textImportFocused || textImportQuery) && (
-                    <div className="absolute top-full left-0 right-0 z-10 mt-1 border border-border rounded-lg bg-card shadow-lg max-h-40 overflow-auto">
-                      {filteredTexts.length === 0 ? (
-                        <div className="px-3 py-2 text-sm text-muted-foreground">
-                          No messages found
-                        </div>
-                      ) : (
-                        filteredTexts.map((text, i) => (
-                          <button
-                            key={text.id}
-                            type="button"
-                            onClick={() => {
-                              setTextImportQuery(text.from);
-                              setTextImportFocused(false);
-                            }}
-                            className={cn(
-                              'w-full text-left px-3 py-2 hover:bg-muted transition-colors',
-                              i < filteredTexts.length - 1 && 'border-b border-border'
-                            )}
-                          >
-                            <p className="text-sm text-muted-foreground">
-                              {text.from} • {text.date}
-                            </p>
-                            <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
-                              {text.preview}
-                            </p>
-                          </button>
-                        ))
-                      )}
-                    </div>
-                  )}
-                </div>
-                {textImportQuery.trim() && (
-                  <Button variant="secondary" size="sm" className="gap-1 shrink-0">
-                    <FileText className="h-4 w-4" />
-                    Generate Note from Text
                   </Button>
                 )}
               </div>

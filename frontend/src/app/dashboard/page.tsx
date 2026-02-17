@@ -283,6 +283,31 @@ function formatPageDate(date: Date): string {
   });
 }
 
+/** Convert YYYY-MM-DD to DD-MM-YYYY for display in date inputs. */
+function toDisplayDate(iso: string): string {
+  if (!iso || iso.length < 10) return '';
+  const [y, m, d] = iso.split('-');
+  return d && m && y ? `${d}-${m}-${y}` : iso;
+}
+
+/** Parse DD-MM-YYYY or DD/MM/YYYY to YYYY-MM-DD; return empty string if invalid. */
+function parseDisplayDateToIso(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) return '';
+  const parts = trimmed.split(/[-/]/);
+  if (parts.length !== 3) return '';
+  const [a, b, c] = parts;
+  const day = a?.length === 2 ? a : a?.padStart(2, '0');
+  const month = b?.length === 2 ? b : b?.padStart(2, '0');
+  const year = c?.length === 4 ? c : '';
+  if (!year || !month || !day) return '';
+  const y = parseInt(year, 10);
+  const m = parseInt(month, 10);
+  const d = parseInt(day, 10);
+  if (m < 1 || m > 12 || d < 1 || d > 31) return '';
+  return `${y}-${month}-${day}`;
+}
+
 function isSameDay(iso: string, dateStr: string): boolean {
   if (!dateStr) return true;
   const d = new Date(iso);
@@ -877,10 +902,14 @@ export default function DashboardPage(): React.ReactElement {
                 <Label htmlFor="date-from">Date from</Label>
                 <Input
                   id="date-from"
-                  type="date"
-                  value={filterDraft.dateFrom}
+                  type="text"
+                  placeholder="DD-MM-YYYY"
+                  value={toDisplayDate(filterDraft.dateFrom)}
                   onChange={(e) =>
-                    setFilterDraft((prev) => ({ ...prev, dateFrom: e.target.value }))
+                    setFilterDraft((prev) => ({
+                      ...prev,
+                      dateFrom: parseDisplayDateToIso(e.target.value),
+                    }))
                   }
                 />
               </div>
@@ -888,10 +917,14 @@ export default function DashboardPage(): React.ReactElement {
                 <Label htmlFor="date-to">Date to</Label>
                 <Input
                   id="date-to"
-                  type="date"
-                  value={filterDraft.dateTo}
+                  type="text"
+                  placeholder="DD-MM-YYYY"
+                  value={toDisplayDate(filterDraft.dateTo)}
                   onChange={(e) =>
-                    setFilterDraft((prev) => ({ ...prev, dateTo: e.target.value }))
+                    setFilterDraft((prev) => ({
+                      ...prev,
+                      dateTo: parseDisplayDateToIso(e.target.value),
+                    }))
                   }
                 />
               </div>
@@ -921,10 +954,11 @@ export default function DashboardPage(): React.ReactElement {
               <Filter className="h-4 w-4" />
             </Button>
             <Input
-              type="date"
+              type="text"
               className="h-9 w-[140px]"
-              value={datePickerValue}
-              onChange={(e) => setDatePickerValue(e.target.value)}
+              placeholder="DD-MM-YYYY"
+              value={toDisplayDate(datePickerValue)}
+              onChange={(e) => setDatePickerValue(parseDisplayDateToIso(e.target.value))}
               aria-label="Filter by date"
             />
             <Select value={sort} onValueChange={(v) => setSort(v as SortOption)}>
