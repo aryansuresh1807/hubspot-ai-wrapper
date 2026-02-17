@@ -225,3 +225,13 @@ export interface RegenerateDraftRequest {
   current_note: string;
   previous_notes: string;
 }
+
+// -----------------------------------------------------------------------------
+// Communication summary (GET /api/v1/activities/{id}/communication-summary)
+// -----------------------------------------------------------------------------
+
+export interface CommunicationSummaryResponse {
+  summary: string;
+  times_contacted: string;
+  relationship_status: string;
+}

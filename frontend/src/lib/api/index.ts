@@ -12,6 +12,7 @@ export {
 export {
   getActivities,
   getActivity,
+  getCommunicationSummary,
   createActivity,
   updateActivity,
   deleteActivity,
@@ -72,4 +73,5 @@ export type {
   RecognisedDateOut,
   RecommendedTouchDateOut,
   ExtractedMetadataOut,
+  CommunicationSummaryResponse,
 } from './types';

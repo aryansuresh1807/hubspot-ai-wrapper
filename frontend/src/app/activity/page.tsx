@@ -57,6 +57,7 @@ import { OpportunityIndicator } from '@/components/crm/OpportunityIndicator';
 import { cn } from '@/lib/utils';
 import {
   getActivity,
+  getCommunicationSummary,
   processActivityNotes,
   createAndSubmitActivity,
   submitActivity,
@@ -66,6 +67,7 @@ import {
   searchCompanies,
   completeActivity,
 } from '@/lib/api';
+import type { CommunicationSummaryResponse } from '@/lib/api/types';
 import type { Contact } from '@/lib/api/types';
 import type { CompanySearchResult } from '@/lib/api/companies';
 
@@ -480,6 +482,9 @@ function ActivityPageContent(): React.ReactElement {
   const [editingDraftTone, setEditingDraftTone] = React.useState<DraftTone | null>(null);
   const [isRegeneratingInPreview, setIsRegeneratingInPreview] = React.useState(false);
   const [previousNotesForSubmit, setPreviousNotesForSubmit] = React.useState('');
+  const [commSummary, setCommSummary] = React.useState<CommunicationSummaryResponse | null>(null);
+  const [commSummaryLoading, setCommSummaryLoading] = React.useState(false);
+  const [commSummaryError, setCommSummaryError] = React.useState<string | null>(null);
 
   // Pre-fill contact and account from URL (dashboard Open passes these)
   React.useEffect(() => {
@@ -522,7 +527,9 @@ function ActivityPageContent(): React.ReactElement {
       .then((a) => {
         if (cancelled) return;
         setActivity(a);
-        setPreviousNotesForSubmit((a.body ?? '').trim());
+        const bodyTrimmed = (a.body ?? '').trim();
+        setPreviousNotesForSubmit(bodyTrimmed);
+        // Leave noteContent empty: meeting notes field is for NEW notes the user will add, not existing history
         if (a.subject) setSubject(a.subject);
         const contact = a.contacts?.[0];
         const company = a.companies?.[0];
@@ -541,7 +548,6 @@ function ActivityPageContent(): React.ReactElement {
           setSelectedAccount({ id: company.id, name: company.name ?? undefined, domain: undefined, city: undefined, state: undefined });
           setAccountSearch(company.name ?? '');
         }
-        // Keep URL pre-fill for body/subject even when API has no contact/company
         setActivityLoading(false);
       })
       .catch(() => {
@@ -559,12 +565,40 @@ function ActivityPageContent(): React.ReactElement {
     getContactsByCompany(selectedAccount.id).then(setContactsByCompany).catch(() => setContactsByCompany([]));
   }, [selectedAccount?.id]);
 
+  // Fetch communication summary when viewing an existing task (backend generates if empty or notes changed, stores in Supabase)
+  React.useEffect(() => {
+    if (!activityId) {
+      setCommSummary(null);
+      setCommSummaryError(null);
+      return;
+    }
+    let cancelled = false;
+    setCommSummaryLoading(true);
+    setCommSummaryError(null);
+    getCommunicationSummary(activityId)
+      .then((data) => {
+        if (!cancelled) {
+          setCommSummary(data);
+          setCommSummaryError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setCommSummary(null);
+          setCommSummaryError(err instanceof Error ? err.message : 'Failed to load communication summary');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setCommSummaryLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [activityId]);
+
   const lowConfidenceFields = React.useMemo(() => {
     const list: string[] = [];
-    if (questionsConfidence > 0 && questionsConfidence < LOW_CONFIDENCE_THRESHOLD) list.push('Questions Raised');
-    if (subjectConfidence > 0 && subjectConfidence < LOW_CONFIDENCE_THRESHOLD) list.push('Subject');
+    if (subjectConfidence > 0 && subjectConfidence < LOW_CONFIDENCE_THRESHOLD) list.push('Task Title');
     return list;
-  }, [subjectConfidence, questionsConfidence]);
+  }, [subjectConfidence]);
 
   const showErrorBanner = lowConfidenceFields.length > 0 && processingStep === 'ready';
 
@@ -1101,55 +1135,6 @@ function ActivityPageContent(): React.ReactElement {
           </CardContent>
         </Card>
 
-        {/* Activity Type & Outcome */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Activity Details</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div>
-              <Label className="text-sm text-muted-foreground">
-                Activity Type
-              </Label>
-              <Select
-                value={activityType}
-                onValueChange={setActivityType}
-              >
-                <SelectTrigger className="mt-1 h-9 rounded-md border border-border bg-background text-sm font-normal text-foreground">
-                  <SelectValue placeholder="Select type" />
-                </SelectTrigger>
-                <SelectContent>
-                  {ACTIVITY_TYPES.map((type) => (
-                    <SelectItem key={type} value={type}>
-                      {type}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label className="text-sm text-muted-foreground">
-                Activity Outcome
-              </Label>
-              <Select
-                value={activityOutcome}
-                onValueChange={setActivityOutcome}
-              >
-                <SelectTrigger className="mt-1 h-9 rounded-md border border-border bg-background text-sm font-normal text-foreground">
-                  <SelectValue placeholder="Select outcome" />
-                </SelectTrigger>
-                <SelectContent>
-                  {ACTIVITY_OUTCOMES.map((outcome) => (
-                    <SelectItem key={outcome} value={outcome}>
-                      {outcome}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </CardContent>
-        </Card>
-
         {/* 4. Quick Actions */}
         <Card>
           <CardHeader>
@@ -1196,26 +1181,60 @@ function ActivityPageContent(): React.ReactElement {
       {/* Right column - fixed content width (48rem = max-w-3xl), fills rest of screen */}
       <div className="w-[48rem] shrink-0 flex flex-col overflow-y-auto p-4 min-w-0">
         <div className="w-full max-w-3xl flex flex-col gap-6">
-        {/* 1. Summary of Communication History - first section */}
+        {/* 1. Communication summary (from client notes; stored per task in Supabase) */}
         <Card className="border-primary/30 bg-primary/5">
           <CardHeader className="space-y-0 pb-2">
             <CardTitle className="text-base flex items-center gap-2">
               <RefreshCw className="h-4 w-4 text-primary" />
-              Summary of Communication History
+              Communication summary
             </CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">
+              {activityId
+                ? 'Summary of client notes for this task. Regenerated when notes change.'
+                : 'Open a task to see the communication summary from its client notes.'}
+            </p>
           </CardHeader>
-          <CardContent>
-            {processingStep === 'extracting' ? (
-              <div className="space-y-2">
+          <CardContent className="space-y-4">
+            {!activityId ? (
+              <p className="text-sm text-muted-foreground">
+                Select or create an activity to see its communication summary.
+              </p>
+            ) : commSummaryLoading ? (
+              <div className="space-y-3">
                 <Skeleton variant="text" className="h-3 w-full" />
                 <Skeleton variant="text" className="h-3 w-full" />
                 <Skeleton variant="text" className="h-3 w-4/5" />
-                <Skeleton variant="text" className="h-3 w-3/4" />
+                <div className="flex gap-4 pt-2">
+                  <Skeleton variant="rectangle" className="h-8 w-32" />
+                  <Skeleton variant="rectangle" className="h-8 w-40" />
+                </div>
               </div>
+            ) : commSummaryError ? (
+              <p className="text-sm text-status-at-risk">{commSummaryError}</p>
+            ) : commSummary ? (
+              <>
+                <div>
+                  <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
+                    {commSummary.summary || 'No summary available.'}
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-border">
+                  <div>
+                    <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Times contacted</span>
+                    <p className="text-sm text-foreground mt-0.5">
+                      {commSummary.times_contacted || '—'}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Relationship status</span>
+                    <p className="text-sm text-foreground mt-0.5">
+                      {commSummary.relationship_status || '—'}
+                    </p>
+                  </div>
+                </div>
+              </>
             ) : (
-              <p className="text-sm text-muted-foreground line-clamp-3">
-                {summaryDraft || 'Send for processing to generate a summary from the full notes.'}
-              </p>
+              <p className="text-sm text-muted-foreground">No communication summary yet.</p>
             )}
           </CardContent>
         </Card>
@@ -1237,7 +1256,7 @@ function ActivityPageContent(): React.ReactElement {
 
         {/* 3. Dates (Activity Date + Due Date) */}
         <Card>
-          <CardHeader>
+          <CardHeader className="pb-2">
             <CardTitle className="text-base">Dates</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -1323,7 +1342,7 @@ function ActivityPageContent(): React.ReactElement {
         {/* 4. Extracted Metadata */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Extracted Metadata</CardTitle>
+            <CardTitle className="text-base">Extracted Metadata - Upcoming Task</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {processingStep === 'extracting' ? (
@@ -1334,10 +1353,6 @@ function ActivityPageContent(): React.ReactElement {
                 </div>
                 <div>
                   <Skeleton variant="text" className="h-4 w-24 mb-2" />
-                  <Skeleton variant="rectangle" className="h-[4.5rem] w-full" />
-                </div>
-                <div>
-                  <Skeleton variant="text" className="h-4 w-28 mb-2" />
                   <Skeleton variant="rectangle" className="h-[4.5rem] w-full" />
                 </div>
                 <div>
@@ -1353,7 +1368,7 @@ function ActivityPageContent(): React.ReactElement {
             <>
             <div>
               <Label className="flex items-center gap-2">
-                Upcoming Task - Subject
+                Task Title
                 {subjectConfidence > 0 && <ConfidenceBadge value={subjectConfidence} />}
               </Label>
               <Input
@@ -1371,23 +1386,6 @@ function ActivityPageContent(): React.ReactElement {
                 value={nextSteps}
                 onChange={(e) => setNextSteps(e.target.value)}
                 className="mt-2"
-                rows={2}
-              />
-            </div>
-            <div>
-              <Label className="flex items-center gap-2">
-                Questions Raised
-                {questionsConfidence > 0 && (
-                  <ConfidenceBadge value={questionsConfidence} />
-                )}
-              </Label>
-              <Textarea
-                value={questionsRaised}
-                onChange={(e) => setQuestionsRaised(e.target.value)}
-                className={cn(
-                  'mt-2',
-                  questionsConfidence > 0 && questionsConfidence < LOW_CONFIDENCE_THRESHOLD && 'border-status-cooling'
-                )}
                 rows={2}
               />
             </div>
@@ -1592,16 +1590,17 @@ function ActivityPageContent(): React.ReactElement {
                 setIsSubmitting(true);
                 try {
                   if (activityId) {
-                  await submitActivity(activityId, {
-                    mark_complete: false,
-                    meeting_notes: noteContent.trim(),
-                    activity_date: activityDate || undefined,
-                    due_date: dueDate || undefined,
-                    subject: subject.trim(),
-                    contact_id: effectiveContactId,
-                    company_id: effectiveCompanyId,
-                  });
+                    await submitActivity(activityId, {
+                      mark_complete: false,
+                      meeting_notes: noteContent.trim(),
+                      activity_date: activityDate || undefined,
+                      due_date: dueDate || undefined,
+                      subject: subject.trim(),
+                      contact_id: effectiveContactId,
+                      company_id: effectiveCompanyId,
+                    });
                     setSubmitConfirmOpen(false);
+                    getCommunicationSummary(activityId).then(setCommSummary).catch(() => {});
                   } else {
                     const res = await createAndSubmitActivity({
                       meeting_notes: noteContent.trim(),

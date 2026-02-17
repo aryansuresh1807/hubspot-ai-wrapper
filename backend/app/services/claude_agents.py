@@ -48,7 +48,7 @@ def _parse_json_block(text: str) -> dict | list | None:
 
 
 # ---------------------------------------------------------------------------
-# 1. Summary of communication history
+# 1. Summary of communication history (legacy: returns plain text)
 # ---------------------------------------------------------------------------
 
 def summarize_communication_history(full_notes: str) -> str:
@@ -56,21 +56,43 @@ def summarize_communication_history(full_notes: str) -> str:
     Produce a short summary of the full notes history for this contact.
     Used for the "Summary of Communication History" section (view only).
     """
+    result = generate_communication_summary(full_notes)
+    return result.get("summary") or "No communication history yet."
+
+
+# ---------------------------------------------------------------------------
+# 1b. Communication summary agent (summary + times contacted + relationship status)
+# ---------------------------------------------------------------------------
+
+def generate_communication_summary(full_notes: str) -> dict:
+    """
+    Analyse client notes and return structured communication summary:
+    - summary: concise summary of the notes
+    - times_contacted: what can be recognised from the notes (e.g. "3 calls, 2 emails in Jan 2025")
+    - relationship_status: relationship status inferred from the notes (e.g. "Warm", "Prospect", "Customer")
+    Used for the Communication Summary section on the activity page; stored per task in Supabase.
+    """
     if not full_notes or not full_notes.strip():
-        return "No communication history yet."
-    client = _get_client()
-    prompt = """You are an assistant that summarizes client communication history for a sales/relationship manager.
+        return {
+            "summary": "No communication history yet.",
+            "times_contacted": "",
+            "relationship_status": "",
+        }
+    prompt = """You are an assistant that analyses client communication notes for a sales/relationship manager.
 
-Given the full notes history below (often with date-prefixed entries), write a concise summary that captures:
-- Key topics and outcomes discussed
-- Any commitments or next steps mentioned over time
-- Relationship context that would help the user at a glance
+Given the full notes history below (often with date-prefixed entries), produce a structured analysis.
 
-Keep the summary to 2–4 short paragraphs. Write in clear, professional language.
+Respond with ONLY a JSON object in this exact format, no other text:
+{
+  "summary": "2-4 short paragraphs: key topics, outcomes, commitments, next steps, and relationship context.",
+  "times_contacted": "What you can recognise from the notes about how often or when they were contacted (e.g. '3 calls in January, 2 emails in February', or 'Initial call 01/15, follow-up 01/22'). If unclear, say 'Not clearly stated' or similar.",
+  "relationship_status": "One short phrase for the relationship status as it appears from the notes (e.g. 'Prospect', 'Warm lead', 'Existing customer', 'Churned'). If unclear, use 'Unknown'."
+}
 
 Notes:
 """
     try:
+        client = _get_client()
         msg = client.messages.create(
             model=DEFAULT_MODEL,
             max_tokens=DEFAULT_MAX_TOKENS,
@@ -78,11 +100,25 @@ Notes:
         )
         block = msg.content[0] if msg.content else None
         if block and getattr(block, "text", None):
-            return block.text.strip()
+            parsed = _parse_json_block(block.text)
+            if isinstance(parsed, dict):
+                return {
+                    "summary": (parsed.get("summary") or "").strip() or "No summary generated.",
+                    "times_contacted": (parsed.get("times_contacted") or "").strip(),
+                    "relationship_status": (parsed.get("relationship_status") or "").strip(),
+                }
     except Exception as e:
-        logger.exception("Claude summarize_communication_history error: %s", e)
-        return "Unable to generate summary. Please try again."
-    return "No summary generated."
+        logger.exception("Claude generate_communication_summary error: %s", e)
+        return {
+            "summary": "Unable to generate summary. Please try again.",
+            "times_contacted": "",
+            "relationship_status": "",
+        }
+    return {
+        "summary": "No summary generated.",
+        "times_contacted": "",
+        "relationship_status": "",
+    }
 
 
 # ---------------------------------------------------------------------------

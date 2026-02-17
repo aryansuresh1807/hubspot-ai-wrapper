@@ -258,8 +258,10 @@ function loadDashboardStateFromStorage(): {
     const data = JSON.parse(raw) as Record<string, unknown>;
     const filter = filterStateFromApi(data.filter_state as Record<string, unknown>);
     const sort = (data.sort_option as SortOption) || 'date_newest';
-    const datePickerValue =
-      typeof data.date_picker_value === 'string' ? data.date_picker_value : getTodayDateString();
+    const hasDateRange = !!(filter.dateFrom || filter.dateTo);
+    const datePickerValue = hasDateRange
+      ? ''
+      : (typeof data.date_picker_value === 'string' ? data.date_picker_value : getTodayDateString());
     const selectedActivityId =
       typeof data.selected_activity_id === 'string' ? data.selected_activity_id : null;
     return { filter, sort, datePickerValue, selectedActivityId };
@@ -533,7 +535,8 @@ export default function DashboardPage(): React.ReactElement {
     const filter = filterStateFromApi(state.filter_state as Record<string, unknown>);
     setFilterApplied(filter);
     setFilterDraft(filter);
-    setDatePickerValue(state.date_picker_value ?? getTodayDateString());
+    const hasDateRange = !!(filter.dateFrom || filter.dateTo);
+    setDatePickerValue(hasDateRange ? '' : (state.date_picker_value ?? getTodayDateString()));
     if (state.selected_activity_id) setSelectedActivityId(state.selected_activity_id);
   }, [dashboardStateQuery.data]);
 
@@ -645,11 +648,13 @@ export default function DashboardPage(): React.ReactElement {
   );
 
   const filteredByDate = React.useMemo(() => {
+    // When date range filter is active, API already returns tasks in range; don't restrict by single date
+    if (filterApplied.dateFrom || filterApplied.dateTo) return activities;
     if (!datePickerValue) return activities;
     return activities.filter((item) =>
       isSameDay(item.activity.lastTouchDate, datePickerValue)
     );
-  }, [activities, datePickerValue]);
+  }, [activities, datePickerValue, filterApplied.dateFrom, filterApplied.dateTo]);
 
   const filtered = React.useMemo(() => {
     return filteredByDate.filter((item) => {
@@ -688,6 +693,7 @@ export default function DashboardPage(): React.ReactElement {
 
   const handleApplyFilter = () => {
     setFilterApplied(filterDraft);
+    if (filterDraft.dateFrom || filterDraft.dateTo) setDatePickerValue('');
     setFilterDialogOpen(false);
   };
 

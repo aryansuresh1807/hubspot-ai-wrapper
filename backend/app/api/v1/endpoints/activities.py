@@ -3,6 +3,7 @@ Activities endpoints (HubSpot tasks with cache).
 List, get, create, update, delete, complete, force-sync, process-notes, submit.
 """
 
+import hashlib
 import logging
 import re
 from datetime import datetime, timezone, timedelta
@@ -18,6 +19,7 @@ from app.schemas.activity import (
     ActivitySortOption,
     ActivitySubmitRequest,
     ActivityUpdate,
+    CommunicationSummaryResponse,
     CompanyInfo,
     ContactInfo,
     CreateAndSubmitResponse,
@@ -34,6 +36,7 @@ from app.schemas.common import MessageResponse
 from app.services.claude_agents import (
     extract_metadata,
     extract_recognised_date,
+    generate_communication_summary,
     generate_drafts,
     recommend_touch_date,
     regenerate_single_draft,
@@ -244,11 +247,31 @@ def _today_yyyymmdd() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
+def _date_to_hubspot_ms(date_str: str, end_of_day: bool = False) -> int | None:
+    """Convert YYYY-MM-DD to HubSpot hs_timestamp (milliseconds since epoch). UTC."""
+    if not date_str or not date_str.strip():
+        return None
+    try:
+        dt = datetime.strptime(date_str.strip()[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        if end_of_day:
+            dt = dt.replace(hour=23, minute=59, second=59, microsecond=999)
+        return int(dt.timestamp() * 1000)
+    except ValueError:
+        return None
+
+
 @router.get(
     "",
     response_model=ActivityListResponse,
     summary="List activities",
     description="List activities with optional filters and sort. Uses cache if fresh (5 min), else syncs from HubSpot. Default date filter is today.",
+)
+@router.get(
+    "/",
+    response_model=ActivityListResponse,
+    summary="List activities (trailing slash)",
+    description="Same as GET /activities; supports clients that call /activities/.",
+    include_in_schema=False,
 )
 async def list_activities(
     user_id: str = Depends(get_current_user_id),
@@ -266,61 +289,141 @@ async def list_activities(
     effective_date = date
     if effective_date is None and date_from is None and date_to is None:
         effective_date = _today_yyyymmdd()
+    # When user sets a date range (date_from/date_to), query HubSpot directly for that range
+    if date_from or date_to:
+        effective_date = None
 
     try:
-        # a) Check cache freshness
-        last_synced = await supabase.get_tasks_cache_freshness(user_id)
-        now = datetime.now(timezone.utc)
-        fresh = False
-        if last_synced:
-            try:
-                if last_synced.endswith("Z"):
-                    synced_dt = datetime.fromisoformat(last_synced.replace("Z", "+00:00"))
-                else:
-                    synced_dt = datetime.fromisoformat(last_synced)
-                if synced_dt.tzinfo is None:
-                    synced_dt = synced_dt.replace(tzinfo=timezone.utc)
-                fresh = (now - synced_dt).total_seconds() < CACHE_FRESH_SECONDS
-            except (ValueError, TypeError):
-                pass
+        activities: list[dict[str, Any]] = []
 
-        # b) If stale, fetch from HubSpot with associations and replace cache (so deleted tasks disappear)
-        if not fresh:
-            all_tasks: list[dict[str, Any]] = []
+        if date_from or date_to:
+            # Query HubSpot directly for tasks in the date range (search_tasks)
+            from_ms = _date_to_hubspot_ms(date_from or "", end_of_day=False)
+            to_ms = _date_to_hubspot_ms(date_to or "", end_of_day=True) if date_to else None
+            if date_from and from_ms is None:
+                from_ms = _date_to_hubspot_ms("1970-01-01", end_of_day=False)
+            if date_to and to_ms is None:
+                to_ms = _date_to_hubspot_ms("2099-12-31", end_of_day=True)
+
+            search_results: list[dict[str, Any]] = []
             after: str | None = None
             while True:
-                resp = hubspot.get_tasks(
+                resp = hubspot.search_tasks(
+                    due_date_from_ms=from_ms,
+                    due_date_to_ms=to_ms,
                     limit=100,
                     after=after,
-                    associations=["contacts", "companies"],
                 )
                 results = resp.get("results") or []
-                all_tasks.extend(results)
+                search_results.extend(results)
                 paging = resp.get("paging") or {}
                 next_p = paging.get("next") or {}
                 after = next_p.get("after")
                 if not after or not results:
                     break
-            await supabase.delete_tasks_cache_for_user(user_id)
-            if all_tasks:
-                await supabase.upsert_tasks_cache_bulk(user_id, all_tasks)
 
-        # c) Read from cache and transform
-        cached = await supabase.get_tasks_cache(user_id)
-        activities: list[dict[str, Any]] = []
-        for row in cached:
-            data = row.get("data") or {}
-            activities.append(_hubspot_task_to_activity(data))
+            # Enrich with associations: batch read tasks then fetch task-contact and task-company associations
+            task_ids = [r.get("id") for r in search_results if r.get("id")]
+            for i in range(0, len(task_ids), 100):
+                chunk = task_ids[i : i + 100]
+                try:
+                    full_tasks = hubspot.batch_read_tasks(
+                        chunk,
+                        associations=["contacts", "companies"],
+                    )
+                    for t in full_tasks:
+                        activities.append(_hubspot_task_to_activity(t))
+                except HubSpotServiceError:
+                    for r in search_results:
+                        if r.get("id") in chunk:
+                            activities.append(_hubspot_task_to_activity(r))
 
-        # d) Apply filters (with default today)
-        activities = _apply_filters(
-            activities,
-            date=effective_date,
-            relationship_status=relationship_status,
-            processing_status=processing_status,
-            date_from=date_from,
-            date_to=date_to,
-        )
+            # Ensure contact_ids and company_ids are set (batch_read_tasks may not return associations)
+            task_to_contacts: dict[str, list[str]] = {}
+            task_to_companies: dict[str, list[str]] = {}
+            for j in range(0, len(task_ids), 100):
+                chunk = task_ids[j : j + 100]
+                try:
+                    task_to_contacts.update(
+                        hubspot.batch_read_task_associations(chunk, "contacts")
+                    )
+                    task_to_companies.update(
+                        hubspot.batch_read_task_associations(chunk, "companies")
+                    )
+                except HubSpotServiceError:
+                    pass
+            for a in activities:
+                tid = a.get("id")
+                if not tid:
+                    continue
+                if tid in task_to_contacts:
+                    a["contact_ids"] = task_to_contacts[tid]
+                if tid in task_to_companies:
+                    a["company_ids"] = task_to_companies[tid]
+
+            # Apply only relationship/processing filters (date already applied by HubSpot search)
+            activities = _apply_filters(
+                activities,
+                date=None,
+                relationship_status=relationship_status,
+                processing_status=processing_status,
+                date_from=None,
+                date_to=None,
+            )
+        else:
+            # a) Check cache freshness
+            last_synced = await supabase.get_tasks_cache_freshness(user_id)
+            now = datetime.now(timezone.utc)
+            fresh = False
+            if last_synced:
+                try:
+                    if last_synced.endswith("Z"):
+                        synced_dt = datetime.fromisoformat(last_synced.replace("Z", "+00:00"))
+                    else:
+                        synced_dt = datetime.fromisoformat(last_synced)
+                    if synced_dt.tzinfo is None:
+                        synced_dt = synced_dt.replace(tzinfo=timezone.utc)
+                    fresh = (now - synced_dt).total_seconds() < CACHE_FRESH_SECONDS
+                except (ValueError, TypeError):
+                    pass
+
+            # b) If stale, fetch from HubSpot with associations and replace cache (so deleted tasks disappear)
+            if not fresh:
+                all_tasks: list[dict[str, Any]] = []
+                after = None
+                while True:
+                    resp = hubspot.get_tasks(
+                        limit=100,
+                        after=after,
+                        associations=["contacts", "companies"],
+                    )
+                    results = resp.get("results") or []
+                    all_tasks.extend(results)
+                    paging = resp.get("paging") or {}
+                    next_p = paging.get("next") or {}
+                    after = next_p.get("after")
+                    if not after or not results:
+                        break
+                await supabase.delete_tasks_cache_for_user(user_id)
+                if all_tasks:
+                    await supabase.upsert_tasks_cache_bulk(user_id, all_tasks)
+
+            # c) Read from cache and transform
+            cached = await supabase.get_tasks_cache(user_id)
+            for row in cached:
+                data = row.get("data") or {}
+                activities.append(_hubspot_task_to_activity(data))
+
+            # d) Apply filters (with default today)
+            activities = _apply_filters(
+                activities,
+                date=effective_date,
+                relationship_status=relationship_status,
+                processing_status=processing_status,
+                date_from=None,
+                date_to=None,
+            )
+
         # e) Enrich with contact details (phone, mobile_phone, company_name) for contact_ids
         all_contact_ids = list({cid for a in activities for cid in (a.get("contact_ids") or [])})
         contact_id_to_company_name: dict[str, str] = {}
@@ -510,6 +613,79 @@ async def get_activity(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get activity",
+        )
+
+
+def _notes_hash(notes: str) -> str:
+    """Stable hash of notes body to detect when to re-run communication summary."""
+    return hashlib.sha256((notes or "").strip().encode("utf-8")).hexdigest()
+
+
+@router.get(
+    "/{activity_id}/communication-summary",
+    response_model=CommunicationSummaryResponse,
+    summary="Get or generate communication summary",
+    description="Returns stored summary for this task; if missing or notes changed, runs agent and stores result.",
+)
+async def get_communication_summary(
+    activity_id: str,
+    user_id: str = Depends(get_current_user_id),
+    supabase: SupabaseService = Depends(get_supabase_service),
+    hubspot: HubSpotService = Depends(get_hubspot_service),
+) -> CommunicationSummaryResponse:
+    """GET /api/v1/activities/{activity_id}/communication-summary — get or generate and store summary from client notes."""
+    try:
+        full_notes = ""
+        cached = await supabase.get_tasks_cache(user_id)
+        for row in cached:
+            if (row.get("hubspot_task_id") or row.get("data", {}).get("id")) == activity_id:
+                data = row.get("data") or {}
+                props = data.get("properties") or {}
+                raw = (props.get(HS_BODY) or "").strip()
+                full_notes = _normalize_notes_body(raw) if raw else ""
+                break
+        if not full_notes:
+            try:
+                task = hubspot.get_task(activity_id)
+                props = task.get("properties") or {}
+                raw = (props.get(HS_BODY) or "").strip()
+                full_notes = _normalize_notes_body(raw) if raw else ""
+            except HubSpotServiceError:
+                pass
+
+        current_hash = _notes_hash(full_notes)
+        stored = await supabase.get_communication_summary(user_id, activity_id)
+
+        if stored and stored.get("notes_hash") == current_hash:
+            return CommunicationSummaryResponse(
+                summary=stored.get("summary") or "",
+                times_contacted=stored.get("times_contacted") or "",
+                relationship_status=stored.get("relationship_status") or "",
+            )
+
+        result = generate_communication_summary(full_notes)
+        await supabase.upsert_communication_summary(
+            user_id=user_id,
+            hubspot_task_id=activity_id,
+            summary=result["summary"],
+            times_contacted=result["times_contacted"],
+            relationship_status=result["relationship_status"],
+            notes_hash=current_hash,
+        )
+        return CommunicationSummaryResponse(
+            summary=result["summary"],
+            times_contacted=result["times_contacted"],
+            relationship_status=result["relationship_status"],
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Get communication summary error: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get communication summary",
         )
 
 

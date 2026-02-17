@@ -407,6 +407,77 @@ class HubSpotService:
             return {"results": data, "total": len(data) if isinstance(data, list) else 0}
         return data
 
+    def batch_read_tasks(
+        self,
+        task_ids: list[str],
+        properties: list[str] | None = None,
+        associations: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Batch read tasks by IDs. Optional associations (e.g. contacts, companies). Max 100 per request."""
+        if not task_ids:
+            return []
+        ids = task_ids[:100]
+        body: dict[str, Any] = {
+            "inputs": [{"id": tid} for tid in ids],
+            "properties": properties or self.TASK_PROPERTIES.copy(),
+        }
+        if associations:
+            body["associations"] = associations
+        try:
+            data = self._request(
+                "POST",
+                "/crm/v3/objects/tasks/batch/read",
+                json=body,
+            )
+        except HubSpotServiceError:
+            raise
+        except Exception as e:
+            raise HubSpotServiceError(f"Failed to batch read tasks: {e!s}") from e
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict) and "results" in data:
+            return data["results"]
+        return []
+
+    def batch_read_task_associations(
+        self,
+        task_ids: list[str],
+        to_object_type: str,
+    ) -> dict[str, list[str]]:
+        """
+        Batch read task-to-object associations (e.g. contacts, companies).
+        POST /crm/v3/associations/tasks/{to_object_type}/batch/read.
+        Returns dict task_id -> list of associated object IDs. Max 100 task IDs per request.
+        """
+        if not task_ids:
+            return {}
+        ids = task_ids[:100]
+        body: dict[str, Any] = {"inputs": [{"id": tid} for tid in ids]}
+        try:
+            data = self._request(
+                "POST",
+                f"/crm/v3/associations/tasks/{to_object_type}/batch/read",
+                json=body,
+            )
+        except HubSpotServiceError:
+            raise
+        except Exception as e:
+            raise HubSpotServiceError(
+                f"Failed to batch read task-{to_object_type} associations: {e!s}"
+            ) from e
+        result: dict[str, list[str]] = {}
+        for r in (data.get("results", []) if isinstance(data, dict) else []):
+            from_obj = r.get("from") or {}
+            from_id = from_obj.get("id") if isinstance(from_obj, dict) else None
+            to_list = r.get("to") or []
+            if from_id is not None:
+                ids_list = []
+                for t in to_list:
+                    if isinstance(t, dict) and t.get("id"):
+                        ids_list.append(str(t["id"]))
+                result[str(from_id)] = ids_list
+        return result
+
     def get_task(
         self,
         task_id: str,

@@ -327,6 +327,66 @@ class SupabaseService:
             )
 
     # -------------------------------------------------------------------------
+    # Task communication summaries (task_communication_summaries table)
+    # -------------------------------------------------------------------------
+
+    async def get_communication_summary(
+        self, user_id: str, hubspot_task_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Return stored communication summary for this task, or None if not found."""
+        try:
+            response = (
+                self.client.table("task_communication_summaries")
+                .select("summary, times_contacted, relationship_status, notes_hash, updated_at")
+                .eq("user_id", user_id)
+                .eq("hubspot_task_id", hubspot_task_id)
+                .limit(1)
+                .execute()
+            )
+            if response.data and len(response.data) > 0:
+                return response.data[0]
+            return None
+        except Exception as e:
+            logger.error("Get communication summary error: %s", str(e))
+            return None
+
+    async def upsert_communication_summary(
+        self,
+        user_id: str,
+        hubspot_task_id: str,
+        summary: str,
+        times_contacted: str,
+        relationship_status: str,
+        notes_hash: str,
+    ) -> Dict[str, Any]:
+        """Insert or update communication summary for this task."""
+        try:
+            now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            row = {
+                "user_id": user_id,
+                "hubspot_task_id": hubspot_task_id,
+                "summary": summary or "",
+                "times_contacted": times_contacted or "",
+                "relationship_status": relationship_status or "",
+                "notes_hash": notes_hash or "",
+                "updated_at": now,
+            }
+            response = (
+                self.client.table("task_communication_summaries")
+                .upsert(row, on_conflict="user_id,hubspot_task_id")
+                .execute()
+            )
+            if response.data and len(response.data) > 0:
+                return response.data[0]
+            return row
+        except Exception as e:
+            logger.error("Upsert communication summary error: %s", str(e))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to save communication summary",
+            )
+
+    # -------------------------------------------------------------------------
     # HubSpot contacts cache (hubspot_contacts_cache table)
     # -------------------------------------------------------------------------
 

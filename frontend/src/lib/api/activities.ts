@@ -9,6 +9,7 @@ import type {
   ActivityListResponse,
   ActivityQueryParams,
   ActivitySubmitRequest,
+  CommunicationSummaryResponse,
   CreateActivityData,
   DashboardActivity,
   ProcessNotesRequest,
@@ -221,6 +222,25 @@ export async function syncActivities(): Promise<SyncResponse> {
     if (err instanceof ApiClientError) throw err;
     throw new Error(
       err instanceof Error ? err.message : 'Failed to sync activities'
+    );
+  }
+}
+
+/**
+ * GET /api/v1/activities/{activityId}/communication-summary
+ * Get or generate communication summary (summary, times_contacted, relationship_status) from client notes; stored per task.
+ */
+export async function getCommunicationSummary(
+  activityId: string
+): Promise<CommunicationSummaryResponse> {
+  try {
+    return fetchApi<CommunicationSummaryResponse>(
+      `/api/v1/activities/${encodeURIComponent(activityId)}/communication-summary`
+    );
+  } catch (err) {
+    if (err instanceof ApiClientError) throw err;
+    throw new Error(
+      err instanceof Error ? err.message : 'Failed to fetch communication summary'
     );
   }
 }

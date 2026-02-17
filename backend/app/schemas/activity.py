@@ -158,3 +158,10 @@ class RegenerateDraftRequest(BaseModel):
     tone: str  # original, formal, concise, warm, detailed
     current_note: str = ""
     previous_notes: str = ""
+
+
+class CommunicationSummaryResponse(BaseModel):
+    """Response for GET /activities/{id}/communication-summary (from DB or newly generated)."""
+    summary: str = ""
+    times_contacted: str = ""
+    relationship_status: str = ""
