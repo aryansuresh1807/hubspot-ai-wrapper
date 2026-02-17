@@ -333,60 +333,123 @@ export default function IntegrationsPage(): React.ReactElement {
                   )}
                 </button>
                 {isExpanded && (
-                  <CardContent className="pt-0 pb-4 space-y-4 border-t">
-                    {int.id === 'email' && (
-                      <div className={cn('flex flex-wrap items-center gap-3', 'pt-4')}>
-                        {gmailConnected === null ? (
-                          <span className="text-sm text-muted-foreground">Checking Gmail…</span>
-                        ) : gmailConnected ? (
-                          <>
-                            <span className="flex items-center gap-1.5 text-sm text-status-warm">
-                              <Check className="h-4 w-4" />
-                              {gmailStatus.email
-                                ? `Gmail connected: ${gmailStatus.email}`
-                                : 'Gmail connected'}
-                            </span>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={handleDisconnectGmail}
-                              disabled={gmailActionLoading}
-                              className="gap-2"
-                            >
-                              {gmailActionLoading && <Loader2 className="h-4 w-4 animate-spin" />}
-                              Disconnect
-                            </Button>
-                          </>
-                        ) : (
+                  <CardContent className="pt-0 pb-4 border-t">
+                    {/* Connection status card - HubSpot */}
+                    {int.id === 'hubspot' && (
+                      <>
+                        <Card className="mt-4 rounded-lg border border-border bg-card shadow-card">
+                          <CardContent className="p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex flex-col gap-0.5">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-medium text-foreground">HubSpot CRM</span>
+                                  <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-status-warm/15 text-status-warm">
+                                    Connected
+                                  </span>
+                                </div>
+                                <p className="text-sm text-muted-foreground">
+                                  Connected via API
+                                </p>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                        <div className="mt-4 flex items-center gap-3">
                           <Button
-                            onClick={handleConnectGmail}
-                            disabled={gmailActionLoading}
+                            onClick={() => handleTestConnection(int.id)}
+                            disabled={testLoading !== null}
                             className="gap-2"
                           >
-                            {gmailActionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                            Connect Gmail
+                            {testLoading === int.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : null}
+                            Test Connection
                           </Button>
-                        )}
-                      </div>
+                          {int.status === 'connected' && (
+                            <span className="flex items-center gap-1.5 text-sm text-status-warm">
+                              <span className="h-2 w-2 rounded-full bg-status-warm" />
+                              Active
+                            </span>
+                          )}
+                        </div>
+                      </>
                     )}
-                    <div className={cn('flex items-center gap-3', (int.id === 'hubspot' || int.id === 'email') && 'pt-4')}>
-                      <Button
-                        onClick={() => handleTestConnection(int.id)}
-                        disabled={testLoading !== null}
-                        className="gap-2"
-                      >
-                        {testLoading === int.id ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : null}
-                        Test Connection
-                      </Button>
-                      {(int.id === 'email' ? gmailConnected : int.status === 'connected') && (
-                        <span className="flex items-center gap-1.5 text-sm text-status-warm">
-                          <span className="h-2 w-2 rounded-full bg-status-warm" />
-                          Active
-                        </span>
-                      )}
-                    </div>
+                    {/* Connection status card - Email / Gmail */}
+                    {int.id === 'email' && (
+                      <>
+                        <Card className="mt-4 rounded-lg border border-border bg-card shadow-card">
+                          <CardContent className="p-4">
+                            {gmailConnected === null ? (
+                              <p className="text-sm text-muted-foreground">Checking Gmail…</p>
+                            ) : gmailConnected ? (
+                              <>
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="flex flex-col gap-0.5 min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="font-medium text-foreground">Gmail</span>
+                                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-status-warm/15 text-status-warm shrink-0">
+                                        Connected
+                                      </span>
+                                    </div>
+                                    {gmailStatus.email && (
+                                      <p className="text-sm text-muted-foreground truncate" title={gmailStatus.email}>
+                                        {gmailStatus.email}
+                                      </p>
+                                    )}
+                                  </div>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={handleDisconnectGmail}
+                                    disabled={gmailActionLoading}
+                                    className="shrink-0 gap-1.5 h-8 text-muted-foreground hover:text-foreground"
+                                  >
+                                    {gmailActionLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+                                    Disconnect
+                                  </Button>
+                                </div>
+                              </>
+                            ) : (
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="font-medium text-foreground">Gmail</span>
+                                  <p className="text-sm text-muted-foreground">
+                                    Connect your Gmail account to sync email
+                                  </p>
+                                </div>
+                                <Button
+                                  onClick={handleConnectGmail}
+                                  disabled={gmailActionLoading}
+                                  size="sm"
+                                  className="shrink-0 gap-1.5"
+                                >
+                                  {gmailActionLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+                                  Connect Gmail
+                                </Button>
+                              </div>
+                            )}
+                          </CardContent>
+                        </Card>
+                        <div className="mt-4 flex items-center gap-3">
+                          <Button
+                            onClick={() => handleTestConnection(int.id)}
+                            disabled={testLoading !== null}
+                            className="gap-2"
+                          >
+                            {testLoading === int.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : null}
+                            Test Connection
+                          </Button>
+                          {gmailConnected && (
+                            <span className="flex items-center gap-1.5 text-sm text-status-warm">
+                              <span className="h-2 w-2 rounded-full bg-status-warm" />
+                              Active
+                            </span>
+                          )}
+                        </div>
+                      </>
+                    )}
                   </CardContent>
                 )}
               </Card>
