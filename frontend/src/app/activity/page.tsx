@@ -68,8 +68,46 @@ import {
 import type { CommunicationSummaryResponse } from '@/lib/api/types';
 import type { Contact } from '@/lib/api/types';
 import type { CompanySearchResult } from '@/lib/api/companies';
+import {
+  gmailSearchEmails,
+  gmailExtractContact,
+  type GmailSearchMessage,
+  type ExtractedContact,
+  type GmailSearchFolder,
+} from '@/lib/api/gmail';
 
 const DEBOUNCE_MS = 300;
+
+/** Filter messages by All / Inbox / Sent using each message's folder tag (from backend). */
+function filterMessagesByFolder(
+  messages: GmailSearchMessage[],
+  folder: GmailSearchFolder,
+): GmailSearchMessage[] {
+  if (folder === 'all') return messages;
+  if (folder === 'inbox') return messages.filter((m) => m.folder === 'inbox' || m.folder === 'both');
+  return messages.filter((m) => m.folder === 'sent' || m.folder === 'both');
+}
+
+/** Format email date for display. */
+function formatEmailDate(msg: GmailSearchMessage): string {
+  const raw = msg.date_iso || msg.date;
+  if (!raw || !raw.trim()) return '—';
+  try {
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return msg.date?.trim() || '—';
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const dDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    if (dDate.getTime() === today.getTime()) return `Today, ${time}`;
+    if (dDate.getTime() === yesterday.getTime()) return `Yesterday, ${time}`;
+    return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) + ', ' + time;
+  } catch {
+    return msg.date?.trim() || '—';
+  }
+}
 
 function useDebouncedValue<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = React.useState(value);
@@ -146,12 +184,6 @@ const DRAFT_TONE_LABELS: Record<DraftTone, string> = {
   warm: 'Warm',
   detailed: 'Detailed',
 };
-
-const MOCK_EMAILS = [
-  { id: 'e1', subject: 'Q1 follow-up and proposal review', from: 'jane@acme.com', date: 'Feb 5, 2025', preview: 'Thanks for the call today. Please send the proposal by end of week.' },
-  { id: 'e2', subject: 'Re: Implementation timeline', from: 'robert@globex.com', date: 'Feb 4, 2025', preview: 'Can we schedule a follow-up to discuss the implementation details?' },
-  { id: 'e3', subject: 'Intro - Wayne Industries', from: 'leslie@wayne.com', date: 'Feb 3, 2025', preview: 'Hi, connecting you with the team regarding the project scope.' },
-];
 
 const ACTIVITY_TYPES = [
   'Call',
@@ -410,6 +442,259 @@ function DateFieldWithCalendar({
 }
 
 // ---------------------------------------------------------------------------
+// Import from communication (trimmed for activity page; same rules & lookup as contacts)
+// ---------------------------------------------------------------------------
+
+interface EmailSnapshotForActivity {
+  subject: string;
+  snippet: string;
+}
+
+function ImportFromCommunicationSection({
+  onUseExtractedData,
+}: {
+  onUseExtractedData: (data: ExtractedContact, emailSnapshot: EmailSnapshotForActivity) => void;
+}): React.ReactElement {
+  const [emailSearchQuery, setEmailSearchQuery] = React.useState('');
+  const [emailSearchFolder, setEmailSearchFolder] = React.useState<GmailSearchFolder>('all');
+  const [emailSearchResults, setEmailSearchResults] = React.useState<GmailSearchMessage[]>([]);
+  const [emailSearchLoading, setEmailSearchLoading] = React.useState(false);
+  const [emailSearchFullCache, setEmailSearchFullCache] = React.useState<GmailSearchMessage[] | null>(null);
+  const [emailSearchFullCacheQuery, setEmailSearchFullCacheQuery] = React.useState('');
+  const [selectedEmailForImport, setSelectedEmailForImport] = React.useState<GmailSearchMessage | null>(null);
+  const [confirmSendOpen, setConfirmSendOpen] = React.useState(false);
+  const [extractLoading, setExtractLoading] = React.useState(false);
+  const [extractedData, setExtractedData] = React.useState<ExtractedContact | null>(null);
+  const [extractedDialogOpen, setExtractedDialogOpen] = React.useState(false);
+  const debouncedEmailQuery = useDebouncedValue(emailSearchQuery.trim(), 400);
+
+  React.useEffect(() => {
+    if (!debouncedEmailQuery) {
+      setEmailSearchResults([]);
+      setEmailSearchFullCache(null);
+      setEmailSearchFullCacheQuery('');
+      return;
+    }
+    const haveFullCacheForQuery =
+      emailSearchFullCache !== null && emailSearchFullCacheQuery === debouncedEmailQuery;
+    if (haveFullCacheForQuery) {
+      setEmailSearchResults(filterMessagesByFolder(emailSearchFullCache, emailSearchFolder));
+      return;
+    }
+    let cancelled = false;
+    setEmailSearchLoading(true);
+    gmailSearchEmails(debouncedEmailQuery, 'all')
+      .then((list) => {
+        if (cancelled) return;
+        setEmailSearchFullCache(list);
+        setEmailSearchFullCacheQuery(debouncedEmailQuery);
+        setEmailSearchResults(filterMessagesByFolder(list, emailSearchFolder));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setEmailSearchResults([]);
+          setEmailSearchFullCache(null);
+          setEmailSearchFullCacheQuery('');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setEmailSearchLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [debouncedEmailQuery, emailSearchFolder, emailSearchFullCache, emailSearchFullCacheQuery]);
+
+  const handleSelectEmailForImport = (msg: GmailSearchMessage) => {
+    setSelectedEmailForImport(msg);
+    setConfirmSendOpen(true);
+  };
+
+  const handleConfirmSendForProcessing = async () => {
+    if (!selectedEmailForImport) return;
+    setExtractLoading(true);
+    setConfirmSendOpen(false);
+    try {
+      const data = await gmailExtractContact(selectedEmailForImport.id);
+      setExtractedData(data);
+      setExtractedDialogOpen(true);
+      // Keep selectedEmailForImport so we can pass subject/snippet when user clicks "Use extracted data"
+    } catch (_err) {
+      setSelectedEmailForImport(null);
+    } finally {
+      setExtractLoading(false);
+    }
+  };
+
+  const handleUseExtractedData = () => {
+    if (!extractedData) return;
+    const snapshot: EmailSnapshotForActivity = {
+      subject: selectedEmailForImport?.subject ?? '',
+      snippet: selectedEmailForImport?.snippet ?? '',
+    };
+    onUseExtractedData(extractedData, snapshot);
+    setExtractedDialogOpen(false);
+    setExtractedData(null);
+    setSelectedEmailForImport(null);
+  };
+
+  const handleCloseExtractedDialog = (open: boolean) => {
+    if (!open) {
+      setExtractedDialogOpen(false);
+      setExtractedData(null);
+      setSelectedEmailForImport(null);
+    }
+  };
+
+  return (
+    <Card className="border-[1.5px]">
+      <CardHeader className="py-2">
+        <CardTitle className="text-base flex items-center gap-2">
+          <Mail className="h-4 w-4" />
+          Import from communication
+        </CardTitle>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Search Gmail and import contact/details from an email into this activity.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-2 pt-0">
+        <div className="flex rounded-md border border-border p-0.5 bg-muted" role="group" aria-label="Search in">
+          {(['all', 'inbox', 'sent'] as const).map((f) => (
+            <Button
+              key={f}
+              type="button"
+              variant="ghost"
+              size="sm"
+              className={`flex-1 rounded-sm text-xs font-medium capitalize ${emailSearchFolder === f ? '!bg-muted-foreground/25 !text-foreground font-semibold' : ''}`}
+              onClick={() => setEmailSearchFolder(f)}
+            >
+              {f === 'all' ? 'All' : f === 'inbox' ? 'Inbox' : 'Sent'}
+            </Button>
+          ))}
+        </div>
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" aria-hidden />
+          <Input
+            type="search"
+            placeholder="Search email by keywords..."
+            value={emailSearchQuery}
+            onChange={(e) => setEmailSearchQuery(e.target.value)}
+            className="pl-9 h-9"
+            aria-label="Search Gmail"
+          />
+          {emailSearchLoading && (
+            <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" aria-hidden />
+          )}
+        </div>
+        {extractLoading && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            Analysing email...
+          </div>
+        )}
+        {!extractLoading && emailSearchResults.length > 0 && (
+          <ul
+            className="border border-border rounded-md divide-y divide-border max-h-[200px] overflow-y-auto"
+            aria-label="Email search results"
+          >
+            {emailSearchResults.map((msg) => (
+              <li key={msg.id}>
+                <button
+                  type="button"
+                  className="w-full text-left px-2.5 py-1.5 hover:bg-muted/50 transition-colors text-sm"
+                  onClick={() => handleSelectEmailForImport(msg)}
+                >
+                  <p className="font-medium text-xs truncate">{msg.subject || '(no subject)'}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{formatEmailDate(msg)}</p>
+                  {(emailSearchFolder === 'all' || emailSearchFolder === 'inbox') && (
+                    <p className="text-xs text-muted-foreground truncate mt-0.5">From: {msg.from || '—'}</p>
+                  )}
+                  {(emailSearchFolder === 'all' || emailSearchFolder === 'sent') && (
+                    <p className="text-xs text-muted-foreground truncate mt-0.5">To: {msg.to || '—'}</p>
+                  )}
+                  {msg.snippet && (
+                    <p className="text-xs text-muted-foreground truncate mt-0.5">{msg.snippet}</p>
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {!extractLoading && debouncedEmailQuery && emailSearchResults.length === 0 && !emailSearchLoading && (
+          <p className="text-xs text-muted-foreground py-1">No emails found. Try different keywords.</p>
+        )}
+      </CardContent>
+
+      <Dialog open={confirmSendOpen} onOpenChange={(open) => !open && (setConfirmSendOpen(false), setSelectedEmailForImport(null))}>
+        <DialogContent className="max-w-md" showClose={true}>
+          <DialogHeader>
+            <DialogTitle>Send for processing?</DialogTitle>
+            <DialogDescription>
+              The selected email will be analysed by AI to extract contact and company details. You can then apply them to this activity.
+            </DialogDescription>
+          </DialogHeader>
+          {selectedEmailForImport && (
+            <div className="rounded-md border border-border bg-muted/30 p-3 text-sm space-y-1">
+              <p><span className="text-muted-foreground">From:</span> {selectedEmailForImport.from}</p>
+              <p><span className="text-muted-foreground">Subject:</span> {selectedEmailForImport.subject || '(no subject)'}</p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => (setConfirmSendOpen(false), setSelectedEmailForImport(null))}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={handleConfirmSendForProcessing} disabled={extractLoading}>
+              {extractLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Confirm
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={extractedDialogOpen} onOpenChange={handleCloseExtractedDialog}>
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto" showClose={true}>
+          <DialogHeader>
+            <DialogTitle>Recognised fields</DialogTitle>
+            <DialogDescription>
+              Review the extracted contact and company details, then use them to fill this activity (contact, subject, notes).
+            </DialogDescription>
+          </DialogHeader>
+          {extractedData && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-2 text-sm">
+                {([
+                  ['First name', extractedData.first_name],
+                  ['Last name', extractedData.last_name],
+                  ['Email', extractedData.email],
+                  ['Phone', extractedData.phone],
+                  ['Job title', extractedData.job_title],
+                  ['Company', extractedData.company_name],
+                  ['Company domain', extractedData.company_domain],
+                  ['City', extractedData.city],
+                  ['State / Region', extractedData.state_region],
+                  ['Company owner', extractedData.company_owner],
+                ] as const).map(([label, value]) => (
+                  <div key={label}>
+                    <span className="text-muted-foreground">{label}:</span>{' '}
+                    <span className="font-medium">{value || '—'}</span>
+                  </div>
+                ))}
+              </div>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => handleCloseExtractedDialog(false)}>
+                  Cancel
+                </Button>
+                <Button type="button" onClick={handleUseExtractedData}>
+                  Use extracted data
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
@@ -445,9 +730,6 @@ function ActivityPageContent(): React.ReactElement {
   const [processingError, setProcessingError] = React.useState<string | null>(null);
   const [activityType, setActivityType] = React.useState<string>('');
   const [activityOutcome, setActivityOutcome] = React.useState<string>('');
-  const [emailImportQuery, setEmailImportQuery] = React.useState('');
-  const [emailImportFocused, setEmailImportFocused] = React.useState(false);
-  const emailImportRef = React.useRef<HTMLDivElement>(null);
   const [activityDate, setActivityDate] = React.useState(() => format(new Date(), 'yyyy-MM-dd'));
   const [dueDate, setDueDate] = React.useState('');
   const [recognisedDate, setRecognisedDate] = React.useState<{ date: string | null; label: string | null; confidence: number }>({ date: null, label: null, confidence: 0 });
@@ -593,9 +875,6 @@ function ActivityPageContent(): React.ReactElement {
 
   React.useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (emailImportRef.current && !emailImportRef.current.contains(e.target as Node)) {
-        setEmailImportFocused(false);
-      }
       if (contactRef.current && !contactRef.current.contains(e.target as Node)) {
         setContactFocused(false);
       }
@@ -607,16 +886,53 @@ function ActivityPageContent(): React.ReactElement {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const filteredEmails = React.useMemo(() => {
-    const q = emailImportQuery.trim().toLowerCase();
-    if (!q) return MOCK_EMAILS;
-    return MOCK_EMAILS.filter(
-      (e) =>
-        e.subject.toLowerCase().includes(q) ||
-        e.from.toLowerCase().includes(q) ||
-        e.preview.toLowerCase().includes(q)
-    );
-  }, [emailImportQuery]);
+  const handleUseExtractedDataFromImport = React.useCallback(
+    async (data: ExtractedContact, emailSnapshot: EmailSnapshotForActivity) => {
+      const namePart = [data.first_name, data.last_name].filter(Boolean).join(' ');
+      const display = namePart || data.email || '';
+      setContactSearch(display);
+      setSubject(emailSnapshot.subject || '');
+      if (emailSnapshot.snippet?.trim()) {
+        setNoteContent((prev) => (prev.trim() ? prev + '\n\n' + emailSnapshot.snippet!.trim() : emailSnapshot.snippet.trim()));
+      }
+      if (data.email?.trim()) {
+        try {
+          const contacts = await searchContacts(data.email.trim());
+          if (contacts.length > 0) {
+            const c = contacts[0];
+            setSelectedContact({
+              id: c.id,
+              first_name: c.first_name,
+              last_name: c.last_name,
+              email: c.email ?? undefined,
+              company_id: c.company_id ?? undefined,
+              company_name: c.company_name ?? undefined,
+            } as Contact);
+            setContactSearch(contactDisplayName(c));
+            if (c.company_id && c.company_name) {
+              setSelectedAccount({ id: c.company_id, name: c.company_name, domain: undefined, city: undefined, state: undefined });
+              setAccountSearch(c.company_name);
+            }
+          }
+        } catch {
+          // keep contact search as display name/email
+        }
+      }
+      if (data.company_name?.trim() && !selectedAccount?.id) {
+        try {
+          const companies = await searchCompanies(data.company_name.trim());
+          if (companies.length > 0) {
+            const co = companies[0];
+            setSelectedAccount(co);
+            setAccountSearch(co.name ?? co.id);
+          }
+        } catch {
+          // ignore
+        }
+      }
+    },
+    [selectedAccount?.id]
+  );
 
   const debouncedContactQuery = useDebouncedValue(contactSearch.trim(), DEBOUNCE_MS);
   const debouncedAccountQuery = useDebouncedValue(accountSearch.trim(), DEBOUNCE_MS);
@@ -848,67 +1164,8 @@ function ActivityPageContent(): React.ReactElement {
           </CardContent>
         </Card>
 
-        {/* 2. Import from Communication */}
-        <Card className="border-[1.5px]">
-          <CardHeader>
-            <CardTitle className="text-base">Import from Communication</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div ref={emailImportRef} className="relative">
-              <Label className="text-sm text-muted-foreground flex items-center gap-1.5">
-                <Mail className="h-4 w-4" />
-                Email Inbox
-              </Label>
-              <div className="flex gap-2 mt-1">
-                <div className="relative flex-1">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-                  <Input
-                    value={emailImportQuery}
-                    onChange={(e) => setEmailImportQuery(e.target.value)}
-                    onFocus={() => setEmailImportFocused(true)}
-                    placeholder="Search emails..."
-                    className="pl-8"
-                  />
-                  {(emailImportFocused || emailImportQuery) && (
-                    <div className="absolute top-full left-0 right-0 z-10 mt-1 border border-border rounded-lg bg-card shadow-lg max-h-40 overflow-auto">
-                      {filteredEmails.length === 0 ? (
-                        <div className="px-3 py-2 text-sm text-muted-foreground">
-                          No emails found
-                        </div>
-                      ) : (
-                        filteredEmails.map((email, i) => (
-                          <button
-                            key={email.id}
-                            type="button"
-                            onClick={() => {
-                              setEmailImportQuery(email.subject);
-                              setEmailImportFocused(false);
-                            }}
-                            className={cn(
-                              'w-full text-left px-3 py-2 hover:bg-muted transition-colors',
-                              i < filteredEmails.length - 1 && 'border-b border-border'
-                            )}
-                          >
-                            <p className="font-medium text-sm">{email.subject}</p>
-                            <p className="text-xs text-muted-foreground mt-0.5">
-                              {email.from} • {email.date}
-                            </p>
-                          </button>
-                        ))
-                      )}
-                    </div>
-                  )}
-                </div>
-                {emailImportQuery.trim() && (
-                  <Button variant="secondary" size="sm" className="gap-1 shrink-0">
-                    <Mail className="h-4 w-4" />
-                    Generate Note from Email
-                  </Button>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        {/* 2. Import from Communication (same rules & lookup as contacts; trimmed layout) */}
+        <ImportFromCommunicationSection onUseExtractedData={handleUseExtractedDataFromImport} />
 
         {/* 3. Contact & Account */}
         <Card className="border-[1.5px]">
