@@ -634,36 +634,65 @@ async def get_communication_summary(
     hubspot: HubSpotService = Depends(get_hubspot_service),
 ) -> CommunicationSummaryResponse:
     """GET /api/v1/activities/{activity_id}/communication-summary — get or generate and store summary from client notes."""
+    logger.info("[communication-summary] START activity_id=%s user_id=%s", activity_id, user_id)
     try:
         full_notes = ""
         cached = await supabase.get_tasks_cache(user_id)
+        logger.info("[communication-summary] tasks_cache rows=%s", len(cached))
         for row in cached:
             if (row.get("hubspot_task_id") or row.get("data", {}).get("id")) == activity_id:
                 data = row.get("data") or {}
                 props = data.get("properties") or {}
                 raw = (props.get(HS_BODY) or "").strip()
                 full_notes = _normalize_notes_body(raw) if raw else ""
+                logger.info("[communication-summary] notes from cache: len(raw)=%s len(full_notes)=%s", len(raw), len(full_notes))
                 break
         if not full_notes:
+            logger.info("[communication-summary] no notes from cache, fetching from HubSpot")
             try:
                 task = hubspot.get_task(activity_id)
                 props = task.get("properties") or {}
                 raw = (props.get(HS_BODY) or "").strip()
                 full_notes = _normalize_notes_body(raw) if raw else ""
-            except HubSpotServiceError:
-                pass
+                logger.info("[communication-summary] notes from HubSpot: len(raw)=%s len(full_notes)=%s", len(raw), len(full_notes))
+            except HubSpotServiceError as e:
+                logger.warning("[communication-summary] HubSpot get_task failed: %s", e)
+
+        logger.info("[communication-summary] full_notes length=%s", len(full_notes))
 
         current_hash = _notes_hash(full_notes)
         stored = await supabase.get_communication_summary(user_id, activity_id)
+        has_stored = stored is not None
+        hash_match = bool(stored and stored.get("notes_hash") == current_hash)
+        # Treat stored "error" summary as cache miss so we retry the agent
+        COMM_SUMMARY_ERROR_MSG = "Unable to generate summary. Please try again."
+        stored_is_error = (
+            stored
+            and (stored.get("summary") or "").strip() == COMM_SUMMARY_ERROR_MSG
+            and not (stored.get("times_contacted") or "").strip()
+            and not (stored.get("relationship_status") or "").strip()
+        )
+        use_cached = hash_match and not stored_is_error
+        logger.info("[communication-summary] stored=%s notes_hash_match=%s stored_is_error=%s use_cached=%s", has_stored, hash_match, stored_is_error, use_cached)
 
-        if stored and stored.get("notes_hash") == current_hash:
+        if use_cached and stored:
+            logger.info("[communication-summary] returning cached summary")
             return CommunicationSummaryResponse(
                 summary=stored.get("summary") or "",
                 times_contacted=stored.get("times_contacted") or "",
                 relationship_status=stored.get("relationship_status") or "",
             )
 
+        if stored_is_error:
+            logger.info("[communication-summary] stored summary was error fallback, regenerating")
+        logger.info("[communication-summary] calling generate_communication_summary (notes_len=%s)", len(full_notes))
         result = generate_communication_summary(full_notes)
+        logger.info(
+            "[communication-summary] agent returned summary_len=%s times_contacted=%s relationship_status=%s",
+            len(result.get("summary", "")),
+            bool(result.get("times_contacted")),
+            bool(result.get("relationship_status")),
+        )
         await supabase.upsert_communication_summary(
             user_id=user_id,
             hubspot_task_id=activity_id,

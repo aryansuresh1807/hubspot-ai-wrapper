@@ -35,6 +35,18 @@ def _get_client() -> Anthropic:
     return Anthropic(api_key=settings.anthropic_api_key)
 
 
+def _get_first_text_from_message(msg) -> str | None:
+    """Safely get the first text block from an Anthropic message. Returns None if empty or no text block."""
+    content = getattr(msg, "content", None)
+    if not content:
+        return None
+    for block in content:
+        text = getattr(block, "text", None)
+        if text is not None and isinstance(text, str) and text.strip():
+            return text
+    return None
+
+
 def _parse_json_block(text: str) -> dict | list | None:
     """Extract JSON from a markdown code block or raw JSON in the response."""
     text = text.strip()
@@ -81,7 +93,9 @@ def generate_communication_summary(full_notes: str) -> dict:
     - relationship_status: relationship status inferred from the notes (e.g. "Warm", "Prospect", "Customer")
     Used for the Communication Summary section on the activity page; stored per task in Supabase.
     """
+    logger.info("[generate_communication_summary] entry full_notes_len=%s", len(full_notes or ""))
     if not full_notes or not full_notes.strip():
+        logger.info("[generate_communication_summary] empty notes, returning default")
         return {
             "summary": "No communication history yet.",
             "times_contacted": "",
@@ -100,29 +114,54 @@ Respond with ONLY a JSON object in this exact format, no other text:
 
 Notes:
 """
+    # Truncate notes to avoid token/size limits and API errors
+    max_notes_len = 50_000
+    notes_to_send = (full_notes[:max_notes_len] + "...") if len(full_notes) > max_notes_len else full_notes
+    content_len = len(prompt) + len(notes_to_send)
+    logger.info("[generate_communication_summary] notes_to_send_len=%s total_content_len=%s", len(notes_to_send), content_len)
     try:
         client = _get_client()
+        logger.info("[generate_communication_summary] calling Claude API model=%s", DEFAULT_MODEL)
         msg = client.messages.create(
             model=DEFAULT_MODEL,
             max_tokens=DEFAULT_MAX_TOKENS,
-            messages=[{"role": "user", "content": prompt + full_notes}],
+            messages=[{"role": "user", "content": prompt + notes_to_send}],
         )
-        block = msg.content[0] if msg.content else None
-        if block and getattr(block, "text", None):
-            parsed = _parse_json_block(block.text)
+        content_blocks = getattr(msg, "content", None) or []
+        logger.info("[generate_communication_summary] response received content_blocks=%s", len(content_blocks))
+        text = _get_first_text_from_message(msg)
+        if text:
+            logger.info("[generate_communication_summary] first text block len=%s preview=%s", len(text), (text[:200] + "..." if len(text) > 200 else text))
+            parsed = _parse_json_block(text)
             if isinstance(parsed, dict):
+                logger.info("[generate_communication_summary] parsed JSON ok keys=%s", list(parsed.keys()) if parsed else None)
                 return {
                     "summary": (parsed.get("summary") or "").strip() or "No summary generated.",
                     "times_contacted": (parsed.get("times_contacted") or "").strip(),
                     "relationship_status": (parsed.get("relationship_status") or "").strip(),
                 }
-    except Exception as e:
-        logger.exception("Claude generate_communication_summary error: %s", e)
+            logger.warning("[generate_communication_summary] parsed result not a dict: type=%s", type(parsed).__name__)
+        else:
+            logger.warning("[generate_communication_summary] no text in response (blocks=%s)", len(content_blocks))
+    except ValueError as e:
+        logger.warning("[generate_communication_summary] config error: %s", e)
         return {
             "summary": "Unable to generate summary. Please try again.",
             "times_contacted": "",
             "relationship_status": "",
         }
+    except Exception as e:
+        logger.exception(
+            "[generate_communication_summary] exception type=%s msg=%s",
+            type(e).__name__,
+            str(e),
+        )
+        return {
+            "summary": "Unable to generate summary. Please try again.",
+            "times_contacted": "",
+            "relationship_status": "",
+        }
+    logger.info("[generate_communication_summary] falling through to no-summary (no text or parse failed)")
     return {
         "summary": "No summary generated.",
         "times_contacted": "",

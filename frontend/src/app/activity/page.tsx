@@ -789,17 +789,10 @@ function ActivityPageContent(): React.ReactElement {
         <div className="flex flex-col gap-6 p-4">
         {/* 1. Note Editor */}
         <Card className="border-[1.5px]">
-          <CardHeader>
-            <CardTitle className="text-base">
-              Meeting Notes
-            </CardTitle>
-            <p className="text-xs text-muted-foreground mt-1 transition-colors">
-              {processingStep === 'sent' || processingStep === 'extracting'
-                ? 'Saving…'
-                : 'Last saved 12:42 PM'}
-            </p>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Notes</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="space-y-3 pt-0">
             <Textarea
               placeholder="Paste or type your notes here..."
               value={noteContent}

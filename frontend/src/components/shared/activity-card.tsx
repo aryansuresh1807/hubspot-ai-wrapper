@@ -4,12 +4,7 @@ import * as React from 'react';
 import { ExternalLink, Check } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { StatusChip, type RelationshipStatus } from '@/components/shared/status-chip';
-import {
-  ProcessingStatus,
-  type ProcessingStatusType,
-} from '@/components/shared/processing-status';
-import { OpportunityIndicator } from '@/components/shared/opportunity-indicator';
+import { type RelationshipStatus } from '@/components/shared/status-chip';
 import { cn } from '@/lib/utils';
 
 export interface ActivityCardActivity {
@@ -20,8 +15,10 @@ export interface ActivityCardActivity {
   noteExcerpt: string;
   lastTouchDate: string;
   relationshipStatus: RelationshipStatus;
-  opportunityPercentage: number;
-  processingStatus: ProcessingStatusType;
+  /** Optional; not displayed on card until implemented */
+  opportunityPercentage?: number;
+  /** Optional; not displayed on card until implemented */
+  processingStatus?: string;
 }
 
 export interface ActivityCardProps {
@@ -31,22 +28,6 @@ export interface ActivityCardProps {
   onOpen?: (activity: ActivityCardActivity) => void;
   onComplete?: (activity: ActivityCardActivity) => void;
   className?: string;
-}
-
-function formatLastTouch(value: string): string {
-  try {
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return value;
-    const now = new Date();
-    const diffMs = now.getTime() - d.getTime();
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-    if (diffDays === 0) return 'Today';
-    if (diffDays === 1) return 'Yesterday';
-    if (diffDays < 7) return `${diffDays} days ago`;
-    return d.toLocaleDateString();
-  } catch {
-    return value;
-  }
 }
 
 const ActivityCard = React.forwardRef<HTMLDivElement, ActivityCardProps>(
@@ -110,29 +91,6 @@ const ActivityCard = React.forwardRef<HTMLDivElement, ActivityCardProps>(
           <p className="text-sm font-medium text-foreground line-clamp-2">
             {activity.subject || '—'}
           </p>
-
-          {/* Last touch date and relationship status chip */}
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-muted-foreground">
-              {formatLastTouch(activity.lastTouchDate)}
-            </span>
-            <StatusChip status={activity.relationshipStatus} size="sm" />
-          </div>
-
-          {/* Opportunity indicator */}
-          <OpportunityIndicator
-            percentage={activity.opportunityPercentage}
-            showLabel
-            size="sm"
-            className="w-full"
-          />
-
-          {/* Processing status badge */}
-          <ProcessingStatus
-            status={activity.processingStatus}
-            showIcon
-            className="w-fit"
-          />
 
           {/* Action buttons row */}
           <div

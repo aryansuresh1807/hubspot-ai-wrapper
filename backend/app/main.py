@@ -25,12 +25,20 @@ from app.core.config import get_settings
 # Ensure app logs (including request logs) appear in Railway/deploy logs
 _log_handler = logging.StreamHandler(sys.stdout)
 _log_handler.setLevel(logging.INFO)
-_log_handler.setFormatter(logging.Formatter("%(levelname)s:     %(message)s"))
+_log_handler.setFormatter(logging.Formatter("%(levelname)s:     %(name)s: %(message)s"))
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 if not logger.handlers:
     logger.addHandler(_log_handler)
 logger.propagate = True
+# So communication-summary and other app.* loggers show up in server logs
+_app_logger = logging.getLogger("app")
+_app_logger.setLevel(logging.INFO)
+if not _app_logger.handlers:
+    _app_handler = logging.StreamHandler(sys.stdout)
+    _app_handler.setLevel(logging.INFO)
+    _app_handler.setFormatter(logging.Formatter("%(levelname)s:     %(name)s: %(message)s"))
+    _app_logger.addHandler(_app_handler)
 
 # Load settings once at import so CORS list is available to middleware
 _settings = get_settings()
