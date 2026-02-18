@@ -7,6 +7,12 @@ import { Topbar } from '@/components/shared/topbar';
 import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 
+/** Matches AuthContext value from contexts/AuthContext.jsx */
+interface AuthContextValue {
+  user: { user_metadata?: { full_name?: string }; email?: string } | null;
+  signOut: () => void | Promise<void>;
+}
+
 const AUTH_PATH_PREFIXES = ['/login', '/sign-in', '/signin', '/signup', '/forgot-password', '/reset-password', '/auth'];
 
 function isAuthRoute(pathname: string): boolean {
@@ -38,7 +44,7 @@ export function AppShell({
 }: AppShellProps): React.ReactElement {
   const pathname = usePathname();
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
-  const { user: authUser, signOut } = useAuth();
+  const { user: authUser, signOut } = useAuth() as AuthContextValue;
 
   const user = userProp ?? (authUser
     ? {

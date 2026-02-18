@@ -1280,7 +1280,7 @@ function AccountTabContent({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col flex-1 min-h-0 overflow-y-auto gap-4">
       <Card>
         <CardHeader className="py-3">
           <CardTitle className="text-base">Account details</CardTitle>
@@ -1436,7 +1436,7 @@ function ContactsPageContent(): React.ReactElement {
   );
 
   return (
-    <div className="h-full flex flex-col overflow-hidden">
+    <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
       <header className="shrink-0">
         <h1 className="text-2xl font-bold tracking-tight">Contacts</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
@@ -1444,7 +1444,7 @@ function ContactsPageContent(): React.ReactElement {
         </p>
       </header>
 
-      {/* Two columns — each scrolls independently, page itself does not scroll */}
+      {/* Two columns — each scrolls independently; whole page does not scroll */}
       <div className="flex-1 min-h-0 flex overflow-hidden gap-0 mt-3">
 
         {/* Left column (50%): tab switcher (static) + tab content (scrolls) */}

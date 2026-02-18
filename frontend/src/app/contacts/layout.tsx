@@ -3,5 +3,9 @@ export default function ContactsLayout({
 }: {
   children: React.ReactNode;
 }) {
-  return <>{children}</>;
+  return (
+    <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+      {children}
+    </div>
+  );
 }
