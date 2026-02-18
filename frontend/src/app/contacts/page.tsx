@@ -459,7 +459,7 @@ function ContactSearchPanel(): React.ReactElement {
   };
 
   return (
-    <div className="space-y-4 p-4 border-b border-border">
+    <div className="space-y-3 p-3 border-b border-border">
       {/* Search bar */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" aria-hidden />
@@ -493,14 +493,14 @@ function ContactSearchPanel(): React.ReactElement {
           </Card>
         ) : (
           <Card>
-            <CardHeader>
+            <CardHeader className="py-2.5">
               <CardTitle className="text-base">Results</CardTitle>
-              <p className="text-xs text-muted-foreground mt-1">Click the info button to view, edit, or delete.</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Click the info button to view, edit, or delete.</p>
             </CardHeader>
             <CardContent className="p-0">
               <ul className="divide-y divide-border border-t border-border">
                 {contacts.map((c) => (
-                  <li key={c.id} className="flex items-center justify-between gap-4 py-3 px-4">
+                  <li key={c.id} className="flex items-center justify-between gap-4 py-2 px-3">
                     <div className="min-w-0 flex-1">
                       <p className="font-medium truncate">
                         {[c.first_name, c.last_name].filter(Boolean).join(' ') || 'Unnamed'}
@@ -742,19 +742,19 @@ function ImportFromCommunicationColumn({
   };
 
   return (
-    <div className="h-full min-h-0 flex flex-col p-4">
+    <div className="h-full min-h-0 flex flex-col p-3">
       <Card className="flex-1 min-h-0 flex flex-col">
-        <CardHeader className="shrink-0">
+        <CardHeader className="shrink-0 py-3">
           <CardTitle className="text-base flex items-center gap-2">
             <Mail className="h-4 w-4" />
             Import from communication
           </CardTitle>
-          <p className="text-sm text-muted-foreground mt-1">
+          <p className="text-sm text-muted-foreground mt-0.5">
             Search your Gmail and import contact details from an email.
           </p>
         </CardHeader>
-        <CardContent className="flex-1 min-h-0 overflow-y-auto">
-          <div className="space-y-3">
+        <CardContent className="flex-1 min-h-0 overflow-y-auto pt-0">
+          <div className="space-y-2 pt-1">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" aria-hidden />
               <Input
@@ -777,14 +777,14 @@ function ImportFromCommunicationColumn({
             )}
             {!extractLoading && emailSearchResults.length > 0 && (
               <ul
-                className="border border-border rounded-md divide-y divide-border max-h-[280px] overflow-y-auto"
+                className="border border-border rounded-md divide-y divide-border max-h-[240px] overflow-y-auto"
                 aria-label="Email search results"
               >
                 {emailSearchResults.map((msg) => (
                   <li key={msg.id}>
                     <button
                       type="button"
-                      className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors"
+                      className="w-full text-left px-3 py-1.5 hover:bg-muted/50 transition-colors"
                       onClick={() => handleSelectEmailForImport(msg)}
                     >
                       <p className="font-medium text-sm truncate">{msg.subject || '(no subject)'}</p>
@@ -979,19 +979,19 @@ function ContactTabContent({
   };
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 gap-6">
+    <div className="flex flex-col flex-1 min-h-0 gap-4">
       {/* Add contact card — stretches so bottom aligns with Import from communication card */}
       <div className="flex-1 min-h-0 flex flex-col">
         <Card className="h-full flex flex-col">
-            <CardHeader className="shrink-0">
+            <CardHeader className="shrink-0 py-3">
               <CardTitle className="text-base">Add contact</CardTitle>
-              <p className="text-sm text-muted-foreground mt-1">
+              <p className="text-sm text-muted-foreground mt-0.5">
                 Create a new contact. It will be added to HubSpot.
               </p>
             </CardHeader>
-            <CardContent className="flex-1 min-h-0 overflow-y-auto">
-              <form onSubmit={handleCreate} className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <CardContent className="flex-1 min-h-0 overflow-y-auto pt-0">
+              <form onSubmit={handleCreate} className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <Label htmlFor="firstName">First Name *</Label>
                     <Input
@@ -1101,7 +1101,7 @@ function ContactTabContent({
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="flex flex-wrap gap-2 pt-2">
+                <div className="flex flex-wrap gap-2 pt-1">
                   <Button
                     type="button"
                     variant="secondary"
@@ -1122,13 +1122,13 @@ function ContactTabContent({
       {/* Company match picker (after "Use extracted data" from Import column) */}
       {extractedDataForCompanyPicker && (
         <Card className="border-status-warm/30">
-          <CardHeader className="py-3">
+          <CardHeader className="py-2.5">
             <CardTitle className="text-sm">Match account</CardTitle>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground mt-0.5">
               Select a company to associate with this contact, or create a new one.
             </p>
           </CardHeader>
-          <CardContent className="pt-0">
+          <CardContent className="pt-0 pb-3">
             {companyMatchLoading ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -1280,16 +1280,16 @@ function AccountTabContent({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <Card>
-        <CardHeader>
+        <CardHeader className="py-3">
           <CardTitle className="text-base">Account details</CardTitle>
-          <p className="text-sm text-muted-foreground mt-1">
+          <p className="text-sm text-muted-foreground mt-0.5">
             Create a company in HubSpot. Company name and domain are required.
           </p>
         </CardHeader>
-        <CardContent>
-          <form onSubmit={(e) => e.preventDefault()} className="space-y-4">
+        <CardContent className="pt-0">
+          <form onSubmit={(e) => e.preventDefault()} className="space-y-3">
             <div>
               <Label htmlFor="companyName">Company Name *</Label>
               <Input
@@ -1327,7 +1327,7 @@ function AccountTabContent({
                 className="mt-1"
               />
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <Label htmlFor="city">City</Label>
                 <Input
@@ -1347,7 +1347,7 @@ function AccountTabContent({
                 />
               </div>
             </div>
-            <div className="flex flex-wrap gap-2 pt-2">
+            <div className="flex flex-wrap gap-2 pt-1">
               <Button
                 type="button"
                 onClick={handleCreateAccount}
@@ -1439,20 +1439,20 @@ function ContactsPageContent(): React.ReactElement {
     <div className="h-full flex flex-col overflow-hidden">
       <header className="shrink-0">
         <h1 className="text-2xl font-bold tracking-tight">Contacts</h1>
-        <p className="text-sm text-muted-foreground mt-1">
+        <p className="text-sm text-muted-foreground mt-0.5">
           Create and manage contacts and accounts.
         </p>
       </header>
 
       {/* Two columns — each scrolls independently, page itself does not scroll */}
-      <div className="flex-1 min-h-0 flex overflow-hidden gap-0 mt-6">
+      <div className="flex-1 min-h-0 flex overflow-hidden gap-0 mt-3">
 
         {/* Left column (50%): tab switcher (static) + tab content (scrolls) */}
         <div className="flex-1 min-w-0 flex flex-col overflow-hidden border-r border-border">
           <Tabs value={activeTab} onValueChange={handleTabChange} className="flex flex-col h-full min-h-0">
 
             {/* Static header — tab switcher only, never scrolls */}
-            <div className="shrink-0 p-4 border-b border-border">
+            <div className="shrink-0 px-4 py-2.5 border-b border-border">
               <TabsList className="w-full grid grid-cols-2">
                 <TabsTrigger value="contact">Contact</TabsTrigger>
                 <TabsTrigger value="account">Account</TabsTrigger>
@@ -1461,7 +1461,7 @@ function ContactsPageContent(): React.ReactElement {
 
             {/* Scrollable content */}
             <div className="flex-1 min-h-0 flex flex-col overflow-y-auto [scrollbar-gutter:stable]">
-              <TabsContent value="contact" className="p-4 mt-0 flex-1 flex flex-col min-h-0 data-[state=inactive]:hidden">
+              <TabsContent value="contact" className="p-3 mt-0 flex-1 flex flex-col min-h-0 data-[state=inactive]:hidden">
                 <ContactTabContent
                   addContactForm={addContactForm}
                   setAddContactForm={setAddContactForm}
@@ -1469,7 +1469,7 @@ function ContactsPageContent(): React.ReactElement {
                   onClearCompanyPicker={() => setExtractedDataForCompanyPicker(null)}
                 />
               </TabsContent>
-              <TabsContent value="account" className="p-4 mt-0 flex-1 flex flex-col min-h-0 data-[state=inactive]:hidden">
+              <TabsContent value="account" className="p-3 mt-0 flex-1 flex flex-col min-h-0 data-[state=inactive]:hidden">
                 <AccountTabContent
                   returnToContact={returnToContact}
                   onCreateAndGoBack={handleCreateAndGoBack}

@@ -67,7 +67,7 @@ class Settings(BaseSettings):
 
     # LLM (at least one required for AI features)
     openai_api_key: str = Field(default="", description="OpenAI API key")
-    anthropic_api_key: str = Field(default="", description="Anthropic API key (optional)")
+    anthropic_api_key: str = Field(default="", description="Anthropic API key (optional)", validation_alias="ANTHROPIC_API_KEY")
 
     # Database (optional; Supabase client uses URL + key)
     database_url: str = Field(

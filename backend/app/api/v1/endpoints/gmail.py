@@ -130,6 +130,8 @@ async def gmail_search(
             ).execute()
             headers = _headers_map(msg)
             snippet = (msg.get("snippet") or "").strip()
+            internal_date_ms = msg.get("internalDate")
+            internal_ts = int(internal_date_ms) if internal_date_ms else 0
             out.append({
                 "id": msg_id,
                 "subject": headers.get("subject", "(no subject)"),
@@ -137,7 +139,12 @@ async def gmail_search(
                 "to": headers.get("to", ""),
                 "snippet": snippet[:200] + ("..." if len(snippet) > 200 else ""),
                 "date": headers.get("date", ""),
+                "_internalDate": internal_ts,
             })
+        # Ensure reverse chronological order (latest on top)
+        out.sort(key=lambda m: m.get("_internalDate") or 0, reverse=True)
+        for m in out:
+            m.pop("_internalDate", None)
         return {"messages": out}
     except Exception as e:
         logger.exception("Gmail search error: %s", e)

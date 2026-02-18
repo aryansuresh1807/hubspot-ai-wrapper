@@ -791,7 +791,7 @@ function ActivityPageContent(): React.ReactElement {
         <Card className="border-[1.5px]">
           <CardHeader>
             <CardTitle className="text-base">
-              Meeting Notes / Email Thread / Handwritten Notes
+              Meeting Notes
             </CardTitle>
             <p className="text-xs text-muted-foreground mt-1 transition-colors">
               {processingStep === 'sent' || processingStep === 'extracting'
