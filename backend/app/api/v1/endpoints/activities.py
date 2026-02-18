@@ -25,6 +25,7 @@ from app.schemas.activity import (
     CreateAndSubmitResponse,
     DraftOut,
     ExtractedMetadataOut,
+    ProcessDraftRequest,
     ProcessNotesRequest,
     ProcessNotesResponse,
     RecognisedDateOut,
@@ -873,6 +874,69 @@ async def complete_activity(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to complete activity",
+        )
+
+
+@router.post(
+    "/process-draft",
+    response_model=ProcessNotesResponse,
+    summary="Process draft notes (no activity id)",
+    description="Same as process-notes but accepts note_text and previous_notes in body. Use when creating a new activity.",
+)
+async def process_draft(
+    body: ProcessDraftRequest,
+    user_id: str = Depends(get_current_user_id),
+) -> ProcessNotesResponse:
+    """POST /api/v1/activities/process-draft — LLM processing without an existing activity (e.g. new activity)."""
+    try:
+        note_text = (body.note_text or "").strip()
+        previous_notes = (body.previous_notes or "").strip()
+
+        summary = summarize_communication_history(
+            (previous_notes + "\n\n" + note_text).strip() if previous_notes else note_text
+        )
+        recognised = extract_recognised_date(note_text)
+        recommended = recommend_touch_date(note_text, previous_notes)
+        metadata = extract_metadata(note_text, previous_notes)
+        drafts_map = generate_drafts(note_text, previous_notes)
+
+        drafts_out: dict[str, DraftOut] = {
+            k: DraftOut(text=v["text"], confidence=v["confidence"])
+            for k, v in drafts_map.items()
+        }
+
+        return ProcessNotesResponse(
+            summary=summary,
+            recognised_date=RecognisedDateOut(
+                date=recognised.get("date"),
+                label=recognised.get("label"),
+                confidence=recognised.get("confidence", 0),
+            ),
+            recommended_touch_date=RecommendedTouchDateOut(
+                date=recommended["date"],
+                label=recommended.get("label", ""),
+                rationale=recommended.get("rationale", ""),
+            ),
+            metadata=ExtractedMetadataOut(
+                subject=metadata["subject"],
+                next_steps=metadata["next_steps"],
+                questions_raised=metadata["questions_raised"],
+                urgency=metadata["urgency"],
+                subject_confidence=metadata["subject_confidence"],
+                next_steps_confidence=metadata["next_steps_confidence"],
+                questions_confidence=metadata["questions_confidence"],
+            ),
+            drafts=drafts_out,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Process draft error: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to process draft",
         )
 
 

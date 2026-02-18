@@ -57,9 +57,9 @@ import {
   getActivity,
   getCommunicationSummary,
   processActivityNotes,
+  processDraft,
   createAndSubmitActivity,
   submitActivity,
-  regenerateActivityDraft,
   getContactsByCompany,
   searchContacts,
   searchCompanies,
@@ -750,7 +750,6 @@ function ActivityPageContent(): React.ReactElement {
   const [questionsConfidence, setQuestionsConfidence] = React.useState(0);
   const [selectedDraftTone, setSelectedDraftTone] = React.useState<DraftTone>('original');
   const [drafts, setDrafts] = React.useState<Record<string, { text: string; confidence: number }>>(MOCK_DRAFTS);
-  const [regeneratingTone, setRegeneratingTone] = React.useState<DraftTone | null>(null);
   const [summaryDraft, setSummaryDraft] = React.useState('');
   const [submitConfirmOpen, setSubmitConfirmOpen] = React.useState(false);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
@@ -763,6 +762,8 @@ function ActivityPageContent(): React.ReactElement {
   const [commSummary, setCommSummary] = React.useState<CommunicationSummaryResponse | null>(null);
   const [commSummaryLoading, setCommSummaryLoading] = React.useState(false);
   const [commSummaryError, setCommSummaryError] = React.useState<string | null>(null);
+  const [processConfirmOpen, setProcessConfirmOpen] = React.useState(false);
+  const draftSentForProcessingRef = React.useRef<string>('');
 
   // Pre-fill contact and account from URL (dashboard Open passes these)
   React.useEffect(() => {
@@ -1019,12 +1020,16 @@ function ActivityPageContent(): React.ReactElement {
   const accountSuggestions = React.useMemo(() => accountOptions.slice(0, 10), [accountOptions]);
 
   const handleSendForProcessing = async () => {
-    if (!activityId || !noteContent.trim()) return;
+    if (!noteContent.trim()) return;
+    draftSentForProcessingRef.current = noteContent;
+    setProcessConfirmOpen(false);
     setProcessingError(null);
     setProcessingStep('sent');
     setProcessingStep('extracting');
     try {
-      const res = await processActivityNotes(activityId, { note_text: noteContent });
+      const res = activityId
+        ? await processActivityNotes(activityId, { note_text: noteContent })
+        : await processDraft({ note_text: noteContent, previous_notes: previousNotesForSubmit || '' });
       setProcessingStep('ready');
       setSummaryDraft(res.summary);
       setRecognisedDate({
@@ -1041,8 +1046,10 @@ function ActivityPageContent(): React.ReactElement {
       setNextStepsConfidence(res.metadata.next_steps_confidence);
       setQuestionsConfidence(res.metadata.questions_confidence);
       const draftMap: Record<string, { text: string; confidence: number }> = {};
+      const userDraft = draftSentForProcessingRef.current;
+      draftMap.original = { text: userDraft, confidence: 100 };
       Object.entries(res.drafts ?? {}).forEach(([k, v]) => {
-        draftMap[k] = { text: v.text, confidence: v.confidence };
+        if (k !== 'original') draftMap[k] = { text: v.text, confidence: v.confidence };
       });
       setDrafts(draftMap);
     } catch (e) {
@@ -1052,28 +1059,11 @@ function ActivityPageContent(): React.ReactElement {
   };
 
   const handleApplyRecognisedDate = () => {
-    if (recognisedDate.date) setActivityDate(recognisedDate.date);
+    if (recognisedDate.date) setDueDate(recognisedDate.date);
   };
 
   const handleApplyRecommendedDate = () => {
     if (recommendedTouch?.date) setDueDate(recommendedTouch.date);
-  };
-
-  const handleRegenerate = async (tone: DraftTone) => {
-    if (!activityId || tone === 'original') return;
-    setRegeneratingTone(tone);
-    try {
-      const res = await regenerateActivityDraft(activityId, {
-        tone,
-        current_note: noteContent,
-        previous_notes: previousNotesForSubmit,
-      });
-      setDrafts((prev) => ({ ...prev, [tone]: { text: res.text, confidence: res.confidence } }));
-    } catch {
-      // keep existing draft
-    } finally {
-      setRegeneratingTone(null);
-    }
   };
 
   const openPreview = (tone: DraftTone) => {
@@ -1155,8 +1145,8 @@ function ActivityPageContent(): React.ReactElement {
             )}
             <div className="flex gap-2">
               <Button
-                onClick={handleSendForProcessing}
-                disabled={!activityId || !noteContent.trim() || (processingStep !== 'idle' && processingStep !== 'ready')}
+                onClick={() => setProcessConfirmOpen(true)}
+                disabled={!noteContent.trim() || (processingStep !== 'idle' && processingStep !== 'ready')}
                 className="gap-2"
               >
                 {(processingStep === 'sent' || processingStep === 'extracting') ? (
@@ -1168,6 +1158,28 @@ function ActivityPageContent(): React.ReactElement {
               </Button>
               <Button variant="secondary">Save Draft</Button>
             </div>
+            <Dialog open={processConfirmOpen} onOpenChange={(open) => !open && setProcessConfirmOpen(false)}>
+              <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto" showClose={true}>
+                <DialogHeader>
+                  <DialogTitle>Send for processing?</DialogTitle>
+                  <DialogDescription>
+                    Your draft and client notes will be sent to the AI to recognise due date, subject, next steps, and to generate formal, concise, and detailed note drafts. The results will appear in their sections below.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="rounded-md border border-border bg-muted/30 p-3 text-sm">
+                  <p className="text-muted-foreground text-xs font-medium mb-1.5">Draft to process:</p>
+                  <div className="max-h-48 overflow-y-auto whitespace-pre-wrap text-foreground">{noteContent || '—'}</div>
+                </div>
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setProcessConfirmOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button type="button" onClick={handleSendForProcessing}>
+                    Confirm and send
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </CardContent>
         </Card>
 
@@ -1495,7 +1507,7 @@ function ActivityPageContent(): React.ReactElement {
             {recognisedDate.date && (
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm text-muted-foreground">
-                  Recognised date: {recognisedDate.label ?? recognisedDate.date}
+                  Recognised due date: {recognisedDate.label ?? recognisedDate.date}
                 </span>
                 <Button variant="outline" size="sm" onClick={handleApplyRecognisedDate}>
                   Apply
@@ -1610,11 +1622,10 @@ function ActivityPageContent(): React.ReactElement {
               </div>
             ) : (
               <>
-                {(['original', 'formal', 'concise', 'warm', 'detailed'] as const).map((tone) => {
+                {(['original', 'formal', 'concise', 'detailed'] as const).map((tone) => {
                   const draft = drafts[tone];
                   if (!draft) return null;
                   const isSelected = selectedDraftTone === tone;
-                  const isRegeneratingThis = regeneratingTone === tone;
                   return (
                     <div
                       key={tone}
@@ -1646,29 +1657,15 @@ function ActivityPageContent(): React.ReactElement {
                           Select
                         </Button>
                         {tone !== 'original' && (
-                          <>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="gap-1"
-                              onClick={() => openPreview(tone)}
-                            >
-                              <Pencil className="h-4 w-4" />
-                              Edit
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="gap-1"
-                              onClick={() => handleRegenerate(tone)}
-                              disabled={isRegeneratingThis}
-                            >
-                              <RotateCw
-                                className={cn('h-4 w-4', isRegeneratingThis && 'animate-spin')}
-                              />
-                              Regenerate
-                            </Button>
-                          </>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="gap-1"
+                            onClick={() => openPreview(tone)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                            Edit
+                          </Button>
                         )}
                       </div>
                     </div>

@@ -12,6 +12,7 @@ import type {
   CommunicationSummaryResponse,
   CreateActivityData,
   DashboardActivity,
+  ProcessDraftRequest,
   ProcessNotesRequest,
   ProcessNotesResponse,
   RegenerateDraftRequest,
@@ -241,6 +242,33 @@ export async function getCommunicationSummary(
     if (err instanceof ApiClientError) throw err;
     throw new Error(
       err instanceof Error ? err.message : 'Failed to fetch communication summary'
+    );
+  }
+}
+
+/**
+ * POST /api/v1/activities/process-draft
+ * Run LLM processing on draft notes when there is no activity id (e.g. new activity).
+ * Same response shape as process-notes.
+ */
+export async function processDraft(
+  data: ProcessDraftRequest
+): Promise<ProcessNotesResponse> {
+  try {
+    return fetchApi<ProcessNotesResponse>(
+      '/api/v1/activities/process-draft',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          note_text: data.note_text,
+          previous_notes: data.previous_notes ?? '',
+        }),
+      }
+    );
+  } catch (err) {
+    if (err instanceof ApiClientError) throw err;
+    throw new Error(
+      err instanceof Error ? err.message : 'Failed to process draft'
     );
   }
 }

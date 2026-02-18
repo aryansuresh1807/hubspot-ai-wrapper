@@ -175,24 +175,32 @@ Notes:
 
 def extract_recognised_date(latest_note: str, reference_date: datetime | None = None) -> dict:
     """
-    If the note mentions a date or relative date (e.g. "next week", "on Friday"),
-    return that date as YYYY-MM-DD and a label. Otherwise return null.
-    reference_date: use for "next week" etc.; default now.
+    Extract the due date for the upcoming task if the note mentions a specific or relative date
+    (e.g. "by Friday", "next week", "follow up on the 15th"). Returns YYYY-MM-DD and a label.
+    reference_date: use for relative phrases; default now.
     """
     if not latest_note or not latest_note.strip():
         return {"date": None, "label": None, "confidence": 0}
     ref = reference_date or datetime.now(timezone.utc)
     client = _get_client()
-    prompt = f"""You are an assistant that extracts explicit or implied dates from meeting/activity notes.
+    prompt = f"""You are a precise assistant that extracts the DUE DATE for an upcoming task from activity or meeting notes.
 
-Today's date (reference): {ref.strftime("%Y-%m-%d")} ({ref.strftime("%A, %B %d, %Y")}).
+**Reference (today):** {ref.strftime("%Y-%m-%d")} ({ref.strftime("%A, %B %d, %Y")}).
 
-From the following note, determine if the contact or user mentioned a specific date or a relative date (e.g. "next week", "next Wednesday", "in two weeks", "by end of month"). 
-If you find one, compute the actual date and return it as YYYY-MM-DD. Also provide a short label (e.g. "Next week", "Next Wednesday").
-If no date is mentioned or implied, return null for the date.
+**Your task:** From the note below, identify exactly one date that represents when something is due, scheduled, or should happen next. Look for:
+- Explicit dates: "by March 15", "due 2025-03-20", "on Friday"
+- Relative dates: "next week", "in two weeks", "end of month", "next Wednesday"
+- Commitments: "follow up next Tuesday", "send proposal by end of week"
 
-Respond with ONLY a JSON object in this exact format, no other text:
-{{"date": "YYYY-MM-DD" or null, "label": "short label" or null, "confidence": number 0-100}}
+**Rules:**
+- Return the date as YYYY-MM-DD. For "next Friday" use the upcoming Friday from the reference date.
+- "End of week" = Friday of the current or next week as appropriate; "end of month" = last day of the month.
+- label: A short human-readable label (e.g. "Next Wednesday", "By end of week").
+- confidence: 0-100. Use 85+ when the date is explicit; 60-84 when inferred from relative phrases; 0-59 when ambiguous.
+- If no clear due/scheduled date is mentioned or implied, set "date" to null, "label" to null, "confidence" to 0.
+
+Respond with ONLY a JSON object, no other text or markdown:
+{{"date": "YYYY-MM-DD" or null, "label": "short label" or null, "confidence": number}}
 """
     try:
         msg = client.messages.create(
@@ -279,8 +287,8 @@ Respond with ONLY a JSON object:
 
 def extract_metadata(latest_note: str, previous_notes: str = "") -> dict:
     """
-    Extract subject, next steps, questions raised, and urgency (low/medium/high)
-    from the latest note with optional context from previous notes.
+    Extract subject (task title), next steps, questions raised, and urgency from the latest note.
+    Uses previous notes only for context when present.
     """
     if not latest_note or not latest_note.strip():
         return {
@@ -295,20 +303,25 @@ def extract_metadata(latest_note: str, previous_notes: str = "") -> dict:
     client = _get_client()
     context = ""
     if previous_notes and previous_notes.strip():
-        context = "Previous notes (for context only):\n" + previous_notes + "\n\n"
-    prompt = f"""You are an assistant that extracts structured metadata from activity/meeting notes for CRM updates.
+        context = "**Previous notes (context only):**\n" + (previous_notes[:3000] + "..." if len(previous_notes) > 3000 else previous_notes) + "\n\n"
+    prompt = f"""You are a CRM metadata extraction agent. From the latest activity/meeting note, extract structured fields for the upcoming task. Be consistent and accurate.
 
-{context}Latest note:
-{latest_note}
+{context}**Latest note:**
+{latest_note[:8000]}
 
-Extract:
-1. subject: A short task title (e.g. "Check in with Jane", "Call re: Q4 proposal") — one short phrase.
-2. next_steps: Bullet or comma-separated next steps.
-3. questions_raised: Any questions the contact raised or that remain open.
-4. urgency: One of "low", "medium", "high" based on tone and content.
-5. subject_confidence, next_steps_confidence, questions_confidence: 0-100 integers.
+**Extract and respond with ONLY a JSON object (no markdown, no explanation):**
 
-Respond with ONLY a JSON object:
+1. **subject** (string): A single, short task title for the upcoming task (e.g. "Follow-up call with Jane", "Send Q4 proposal", "Review contract"). One phrase, title case. This is the task title in the CRM.
+
+2. **next_steps** (string): Concrete next steps for the upcoming task. Use bullet points (each line starting with "- ") or comma-separated items. Include who does what and by when if stated (e.g. "Send proposal by Wednesday; schedule follow-up call").
+
+3. **questions_raised** (string): Any open questions the contact raised or that remain unanswered. Empty string if none.
+
+4. **urgency** (string): Exactly one of "low", "medium", "high". Use "high" for time-sensitive or commitment-heavy notes; "medium" for normal follow-ups; "low" for informational or casual notes.
+
+5. **subject_confidence**, **next_steps_confidence**, **questions_confidence** (integers 0-100): How confident you are in each extraction. 85+ when explicit in the note; 50-84 when inferred; below 50 when vague.
+
+**Output format (JSON only):**
 {{"subject": "...", "next_steps": "...", "questions_raised": "...", "urgency": "low"|"medium"|"high", "subject_confidence": number, "next_steps_confidence": number, "questions_confidence": number}}
 """
     try:
@@ -347,7 +360,7 @@ Respond with ONLY a JSON object:
 
 
 # ---------------------------------------------------------------------------
-# 5. AI-generated drafts (original, formal, concise, warm, detailed)
+# 5. AI-generated drafts (original = user text; formal, concise, detailed)
 # ---------------------------------------------------------------------------
 
 def generate_drafts(
@@ -356,31 +369,37 @@ def generate_drafts(
     tones: list[str] | None = None,
 ) -> dict[str, dict]:
     """
-    Generate note drafts in multiple tones. current_note is the raw user input.
+    Generate three AI drafts from the current note: formal, concise, and detailed.
+    original is always the user's current note unchanged. Detailed uses previous_notes + current
+    to produce a note that describes the latest interaction with relevant prior context.
     Returns dict keyed by tone: { "original": {text, confidence}, "formal": {...}, ... }.
-    original = cleaned/summarized version of current_note; others = rewritten in that style.
     """
     if tones is None:
-        tones = ["original", "formal", "concise", "warm", "detailed"]
+        tones = ["original", "formal", "concise", "detailed"]
     original_text = (current_note or "").strip() or "No notes provided."
     client = _get_client()
-    context = ""
+    prev_context = ""
     if previous_notes and previous_notes.strip():
-        context = "Previous communication notes (for style/context):\n" + previous_notes + "\n\n"
-    prompt = f"""You are an assistant that rewrites meeting/activity notes for CRM in different tones.
+        prev_context = (
+            "**Previous client/activity notes (use only for context in the 'detailed' draft):**\n"
+            + (previous_notes[:4000] + "..." if len(previous_notes) > 4000 else previous_notes)
+            + "\n\n"
+        )
+    prompt = f"""You are a professional assistant that rewrites meeting/activity notes for a CRM. The user has provided their current draft note. Produce three alternative versions: formal, concise, and detailed.
 
-{context}Current (latest) note to process:
-{original_text}
+{prev_context}**Current note (user's draft) to rewrite:**
+{original_text[:6000]}
 
-Produce the following versions. For "original", provide a clean, professional one-paragraph summary of the current note (same content, polished). For the others, rewrite in that style while keeping the same factual content; "detailed" may add brief context from previous notes if relevant.
+**Requirements for each draft:**
 
-Return ONLY a JSON object with keys: original, formal, concise, warm, detailed. Each value is an object: {{"text": "...", "confidence": number 0-100}}.
+1. **formal**: Rewrite the note in a formal, professional tone. Use complete sentences, avoid colloquialisms, and maintain a business-appropriate register. Keep the same factual content. Confidence 0-100 based on how well the note fits a formal style.
 
-- original: polished summary of current note
-- formal: professional, formal language
-- concise: brief, bullet-friendly
-- warm: friendly, personable
-- detailed: slightly more context, can reference prior history
+2. **concise**: Make the note more concise. Preserve all key facts, outcomes, and commitments but use fewer words. Prefer short sentences and bullet-like clarity. Remove filler. Confidence 0-100.
+
+3. **detailed**: Produce a note that describes the latest interaction in detail. Wherever relevant and necessary, weave in brief context from the previous notes above (e.g. "Following up on the Q1 goals discussed previously..." or "As agreed in the last call..."). The note should still focus on the latest meeting/email but give enough prior context for someone reading only this note to understand the fuller picture. Use flowing prose, 2-4 paragraphs if appropriate. Confidence 0-100.
+
+**Output:** Return ONLY a JSON object with keys: formal, concise, detailed. Each value is an object with "text" (string) and "confidence" (integer 0-100). Do not include "original" in the JSON — the system will use the user's draft as original.
+{{"formal": {{"text": "...", "confidence": number}}, "concise": {{"text": "...", "confidence": number}}, "detailed": {{"text": "...", "confidence": number}}}}
 """
     try:
         msg = client.messages.create(
@@ -392,27 +411,24 @@ Return ONLY a JSON object with keys: original, formal, concise, warm, detailed. 
         if block and getattr(block, "text", None):
             parsed = _parse_json_block(block.text)
             if isinstance(parsed, dict):
-                result: dict[str, dict] = {}
-                for t in tones:
-                    if t == "original" and "original" not in parsed:
-                        result["original"] = {"text": original_text, "confidence": 90}
-                        continue
-                    val = parsed.get(t)
-                    if isinstance(val, dict) and "text" in val:
-                        result[t] = {
-                            "text": str(val["text"]).strip() or original_text,
-                            "confidence": min(100, max(0, int(val.get("confidence", 75)))),
-                        }
-                    else:
-                        result[t] = {"text": original_text, "confidence": 70}
+                result: dict[str, dict] = {"original": {"text": original_text, "confidence": 100}}
+                for t in ["formal", "concise", "detailed"]:
+                    if t not in result and t in tones:
+                        val = parsed.get(t)
+                        if isinstance(val, dict) and "text" in val:
+                            result[t] = {
+                                "text": str(val["text"]).strip() or original_text,
+                                "confidence": min(100, max(0, int(val.get("confidence", 75)))),
+                            }
+                        else:
+                            result[t] = {"text": original_text, "confidence": 70}
                 return result
     except Exception as e:
         logger.exception("Claude generate_drafts error: %s", e)
     return {
-        "original": {"text": original_text, "confidence": 90},
+        "original": {"text": original_text, "confidence": 100},
         "formal": {"text": original_text, "confidence": 70},
         "concise": {"text": original_text, "confidence": 70},
-        "warm": {"text": original_text, "confidence": 70},
         "detailed": {"text": original_text, "confidence": 70},
     }
 

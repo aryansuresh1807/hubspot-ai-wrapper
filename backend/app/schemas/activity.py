@@ -100,6 +100,12 @@ class ProcessNotesRequest(BaseModel):
     note_text: str = ""
 
 
+class ProcessDraftRequest(BaseModel):
+    """Request body for POST /activities/process-draft (no activity id; e.g. new activity)."""
+    note_text: str = ""
+    previous_notes: str = ""
+
+
 class RecognisedDateOut(BaseModel):
     date: str | None = None  # YYYY-MM-DD
     label: str | None = None

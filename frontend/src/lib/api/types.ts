@@ -175,6 +175,11 @@ export interface ProcessNotesRequest {
   note_text: string;
 }
 
+export interface ProcessDraftRequest {
+  note_text: string;
+  previous_notes?: string;
+}
+
 export interface RecognisedDateOut {
   date: string | null;
   label: string | null;
