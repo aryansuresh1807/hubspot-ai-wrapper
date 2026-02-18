@@ -21,13 +21,32 @@ logger = logging.getLogger(__name__)
 GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 
 
+def _parse_token_expiry_from_db(value: Optional[str]) -> Optional[datetime]:
+    """
+    Parse token_expiry from the database into a timezone-aware UTC datetime
+    for use with google.oauth2.credentials.Credentials.
+    Handles ISO strings with or without timezone; always returns UTC-aware or None.
+    """
+    if not value:
+        return None
+    try:
+        s = str(value).strip().replace("Z", "+00:00")
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
+
+
 def _ensure_utc_aware(dt: Optional[datetime]) -> Optional[datetime]:
-    """Ensure datetime is timezone-aware (UTC). Google auth compares expiry to utcnow()."""
+    """Ensure datetime uses datetime.timezone.utc specifically (not pytz or other UTC)."""
     if dt is None:
         return None
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
-    return dt
+    # Force to native datetime.timezone.utc even if already has a timezone
+    return dt.astimezone(timezone.utc).replace(tzinfo=timezone.utc)
 
 
 def _credentials_from_tokens(
@@ -68,14 +87,8 @@ async def get_gmail_client(user_id: str, supabase: SupabaseService):
 
     access_token = row.get("access_token")
     refresh_token = row.get("refresh_token")
-    token_expiry_str = row.get("token_expiry")
-    token_expiry: Optional[datetime] = None
-    if token_expiry_str:
-        try:
-            token_expiry = datetime.fromisoformat(token_expiry_str.replace("Z", "+00:00"))
-            token_expiry = _ensure_utc_aware(token_expiry)
-        except Exception:
-            pass
+    # Parse token_expiry from DB as UTC-aware so Credentials never sees naive datetimes
+    token_expiry = _parse_token_expiry_from_db(row.get("token_expiry"))
 
     creds = _credentials_from_tokens(
         access_token=access_token or "",
@@ -85,10 +98,18 @@ async def get_gmail_client(user_id: str, supabase: SupabaseService):
         client_secret=settings.google_client_secret,
     )
 
-    # Refresh if expired
-    if creds.expired and creds.refresh_token:
+    # Refresh if expired (check ourselves to avoid naive/aware datetime comparison in creds.expired)
+    now_utc = datetime.now(timezone.utc)
+    expiry_utc = _ensure_utc_aware(creds.expiry) if creds.expiry else None
+    is_expired = expiry_utc is None or now_utc >= expiry_utc
+    if is_expired and creds.refresh_token:
         try:
             creds.refresh(Request())
+            # creds.expiry after refresh can be naive; persist as UTC-aware ISO string so DB never stores naive
+            expiry_after_refresh = _ensure_utc_aware(creds.expiry)
+            if expiry_after_refresh:
+                creds.expiry = expiry_after_refresh
+            token_expiry_for_db = expiry_after_refresh.isoformat() if expiry_after_refresh else None
             # Persist new tokens; preserve last_connected_at and email (only set on OAuth connect)
             existing_connected_at = row.get("last_connected_at")
             last_connected_dt = None
@@ -101,7 +122,7 @@ async def get_gmail_client(user_id: str, supabase: SupabaseService):
                 user_id=user_id,
                 access_token=creds.token or "",
                 refresh_token=creds.refresh_token,
-                token_expiry=creds.expiry,
+                token_expiry=token_expiry_for_db,
                 last_connected_at=last_connected_dt,
                 email=row.get("email"),
             )

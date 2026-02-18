@@ -3,6 +3,9 @@ HubSpot AI Wrapper - FastAPI application.
 CORS, API versioning (/api/v1), health check, error handling.
 """
 
+# MUST be first - patches google.auth before any other imports
+from app.core import google_auth_patch  # noqa: F401
+
 import logging
 import os
 import sys

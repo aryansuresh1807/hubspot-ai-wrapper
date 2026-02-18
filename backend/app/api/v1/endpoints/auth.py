@@ -322,8 +322,13 @@ async def gmail_callback(
     token_expiry = None
     if credentials.expiry:
         token_expiry = credentials.expiry
+        # Keep timezone-aware so DB gets an ISO string with timezone (avoids naive/aware comparison later)
         if token_expiry.tzinfo is None:
             token_expiry = token_expiry.replace(tzinfo=timezone.utc)
+        else:
+            token_expiry = token_expiry.astimezone(timezone.utc)
+    # Convert to ISO string with timezone before saving so Supabase stores it correctly (e.g. "2025-02-17T12:00:00+00:00")
+    token_expiry_iso = token_expiry.isoformat() if token_expiry else None
 
     # Fetch Gmail profile email so we can store it (no extra API call needed later)
     gmail_email = None
@@ -336,11 +341,12 @@ async def gmail_callback(
         logger.warning("Could not fetch Gmail profile for email: %s", e)
 
     now_utc = datetime.now(timezone.utc)
+    print(f"Saving token_expiry: {token_expiry}, type: {type(token_expiry)}")  # noqa: T201
     await supabase.upsert_gmail_tokens(
         user_id=user_id,
         access_token=credentials.token or "",
         refresh_token=credentials.refresh_token,
-        token_expiry=token_expiry,
+        token_expiry=token_expiry_iso,
         last_connected_at=now_utc,
         email=gmail_email,
     )

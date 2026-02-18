@@ -4,7 +4,7 @@ Supabase client: auth (sign up, sign in, password reset), token verification, us
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from fastapi import HTTPException, status
 from supabase import Client, create_client
@@ -567,11 +567,11 @@ class SupabaseService:
         user_id: str,
         access_token: str,
         refresh_token: Optional[str] = None,
-        token_expiry: Optional[datetime] = None,
+        token_expiry: Optional[Union[datetime, str]] = None,
         last_connected_at: Optional[datetime] = None,
         email: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Insert or update Gmail tokens for user. Pass last_connected_at and email when user completes OAuth connect."""
+        """Insert or update Gmail tokens for user. Pass last_connected_at and email when user completes OAuth connect. token_expiry can be an ISO str (with timezone) or datetime."""
         try:
             now = datetime.now(timezone.utc)
             row: Dict[str, Any] = {
@@ -581,7 +581,9 @@ class SupabaseService:
                 "updated_at": now.isoformat().replace("+00:00", "Z"),
             }
             if token_expiry is not None:
-                row["token_expiry"] = token_expiry.isoformat().replace("+00:00", "Z")
+                row["token_expiry"] = (
+                    token_expiry if isinstance(token_expiry, str) else token_expiry.isoformat().replace("+00:00", "Z")
+                )
             if last_connected_at is not None:
                 row["last_connected_at"] = last_connected_at.isoformat().replace("+00:00", "Z")
             if email is not None:
