@@ -97,11 +97,13 @@ async def gmail_test(
 @router.get("/search")
 async def gmail_search(
     q: str = Query(..., min_length=1, description="Gmail search query (keywords)"),
+    folder: str = Query("all", description="Search in: all, inbox, sent"),
     user_id: str = Depends(get_current_user_id),
     supabase: SupabaseService = Depends(get_supabase_service),
 ):
     """
     Search user's Gmail with the given query (Gmail search syntax).
+    folder: all (default), inbox, or sent.
     Returns list of messages with id, subject, from, to, snippet, date.
     """
     service = await get_gmail_client(user_id, supabase)
@@ -110,12 +112,21 @@ async def gmail_search(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Gmail not connected. Connect Gmail from Integrations first.",
         )
+    folder_lower = (folder or "all").strip().lower()
+    label_ids = None
+    if folder_lower == "inbox":
+        label_ids = ["INBOX"]
+    elif folder_lower == "sent":
+        label_ids = ["SENT"]
     try:
-        results = service.users().messages().list(
-            userId="me",
-            q=q.strip(),
-            maxResults=20,
-        ).execute()
+        list_kwargs: Dict[str, Any] = {
+            "userId": "me",
+            "q": q.strip(),
+            "maxResults": 20,
+        }
+        if label_ids is not None:
+            list_kwargs["labelIds"] = label_ids
+        results = service.users().messages().list(**list_kwargs).execute()
         messages = results.get("messages") or []
         out: List[Dict[str, Any]] = []
         for msg_ref in messages:
@@ -209,6 +220,12 @@ async def gmail_extract_contact(
     message_id = (body.message_id or "").strip()
     if not message_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="message_id is required")
+    tokens_row = await supabase.get_gmail_tokens(user_id)
+    if not tokens_row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Gmail not connected. Connect Gmail from Integrations first.",
+        )
     service = await get_gmail_client(user_id, supabase)
     if not service:
         raise HTTPException(
@@ -232,10 +249,12 @@ async def gmail_extract_contact(
     email_to = headers.get("to", "")
     subject = headers.get("subject", "")
     body_text = _get_body_from_payload(msg.get("payload") or {})
+    user_email = (tokens_row.get("email") or "").strip() or None
     extracted = extract_contact_from_email(
         sender=email_from,
         to=email_to,
         subject=subject,
         body=body_text,
+        user_email=user_email,
     )
     return extracted

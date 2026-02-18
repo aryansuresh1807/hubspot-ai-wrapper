@@ -52,6 +52,7 @@ import {
   gmailExtractContact,
   type GmailSearchMessage,
   type ExtractedContact,
+  type GmailSearchFolder,
 } from '@/lib/api/gmail';
 import { cn } from '@/lib/utils';
 import { Mail } from 'lucide-react';
@@ -684,6 +685,7 @@ function ImportFromCommunicationColumn({
   onUseExtractedData: (data: ExtractedContact) => void;
 }): React.ReactElement {
   const [emailSearchQuery, setEmailSearchQuery] = React.useState('');
+  const [emailSearchFolder, setEmailSearchFolder] = React.useState<GmailSearchFolder>('all');
   const [emailSearchResults, setEmailSearchResults] = React.useState<GmailSearchMessage[]>([]);
   const [emailSearchLoading, setEmailSearchLoading] = React.useState(false);
   const [selectedEmailForImport, setSelectedEmailForImport] = React.useState<GmailSearchMessage | null>(null);
@@ -700,7 +702,7 @@ function ImportFromCommunicationColumn({
     }
     let cancelled = false;
     setEmailSearchLoading(true);
-    gmailSearchEmails(debouncedEmailQuery)
+    gmailSearchEmails(debouncedEmailQuery, emailSearchFolder)
       .then((list) => {
         if (!cancelled) setEmailSearchResults(list);
       })
@@ -711,7 +713,7 @@ function ImportFromCommunicationColumn({
         if (!cancelled) setEmailSearchLoading(false);
       });
     return () => { cancelled = true; };
-  }, [debouncedEmailQuery]);
+  }, [debouncedEmailQuery, emailSearchFolder]);
 
   const handleSelectEmailForImport = (msg: GmailSearchMessage) => {
     setSelectedEmailForImport(msg);
@@ -755,6 +757,20 @@ function ImportFromCommunicationColumn({
         </CardHeader>
         <CardContent className="flex-1 min-h-0 overflow-y-auto pt-0">
           <div className="space-y-2 pt-1">
+            <div className="flex rounded-md border border-border p-0.5 bg-muted" role="group" aria-label="Search in">
+              {(['all', 'inbox', 'sent'] as const).map((f) => (
+                <Button
+                  key={f}
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className={`flex-1 rounded-sm text-xs font-medium capitalize ${emailSearchFolder === f ? '!bg-muted-foreground/25 !text-foreground font-semibold' : ''}`}
+                  onClick={() => setEmailSearchFolder(f)}
+                >
+                  {f === 'all' ? 'All' : f === 'inbox' ? 'Inbox' : 'Sent'}
+                </Button>
+              ))}
+            </div>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" aria-hidden />
               <Input
@@ -1453,9 +1469,19 @@ function ContactsPageContent(): React.ReactElement {
 
             {/* Static header — tab switcher only, never scrolls */}
             <div className="shrink-0 px-4 py-2.5 border-b border-border">
-              <TabsList className="w-full grid grid-cols-2">
-                <TabsTrigger value="contact">Contact</TabsTrigger>
-                <TabsTrigger value="account">Account</TabsTrigger>
+              <TabsList className="w-full grid grid-cols-2 bg-muted">
+                <TabsTrigger
+                  value="contact"
+                  className="data-[state=active]:bg-muted-foreground/25 data-[state=active]:text-foreground data-[state=active]:font-semibold data-[state=active]:shadow-sm"
+                >
+                  Contact
+                </TabsTrigger>
+                <TabsTrigger
+                  value="account"
+                  className="data-[state=active]:bg-muted-foreground/25 data-[state=active]:text-foreground data-[state=active]:font-semibold data-[state=active]:shadow-sm"
+                >
+                  Account
+                </TabsTrigger>
               </TabsList>
             </div>
 

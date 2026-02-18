@@ -7,12 +7,21 @@ import json
 import logging
 import re
 from datetime import datetime, timezone, timedelta
+from typing import Optional
 
 from anthropic import Anthropic
+import requests
 
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+# Domains we treat as consumer/personal email (not company); contact domain won't be used for company confirmation.
+CONSUMER_EMAIL_DOMAINS = frozenset({
+    "gmail.com", "googlemail.com", "yahoo.com", "yahoo.co.uk", "outlook.com", "hotmail.com",
+    "hotmail.co.uk", "live.com", "msn.com", "icloud.com", "me.com", "mac.com", "aol.com",
+    "protonmail.com", "proton.me", "zoho.com", "mail.com", "yandex.com", "gmx.com", "gmx.net",
+})
 
 # Default model for all agents
 DEFAULT_MODEL = "claude-sonnet-4-20250514"
@@ -383,56 +392,223 @@ def regenerate_single_draft(
 # 6. Extract contact + company from email (for "Import from communication")
 # ---------------------------------------------------------------------------
 
+def _domain_from_email(email: str) -> str:
+    """Extract domain from an email address (e.g. contact@company.com -> company.com)."""
+    if not email or "@" not in email:
+        return ""
+    return email.strip().rsplit("@", 1)[-1].lower()
+
+
+def _is_consumer_email_domain(domain: str) -> bool:
+    """True if the domain is a known consumer/personal email provider."""
+    return (domain or "").lower() in CONSUMER_EMAIL_DOMAINS
+
+
+def _company_name_from_domain(domain: str, timeout_sec: float = 4.0) -> Optional[str]:
+    """
+    Try to get a company name from the domain's homepage (e.g. fetch and parse <title>).
+    Returns None on any failure or if title is not usable.
+    """
+    if not domain or "." not in domain:
+        return None
+    domain = domain.lower().strip()
+    if domain.startswith("www."):
+        domain = domain[4:]
+    url = f"https://{domain}"
+    try:
+        resp = requests.get(url, timeout=timeout_sec, allow_redirects=True)
+        resp.raise_for_status()
+        text = (resp.text or "")[:100000]
+        match = re.search(r"<title[^>]*>\s*([^<]+?)\s*</title>", text, re.IGNORECASE | re.DOTALL)
+        if not match:
+            return None
+        title = match.group(1).strip()
+        title = re.sub(r"\s+", " ", title)
+        # Drop common suffixes that are not the company name
+        for suffix in (" - home", " | home", " - official site", " - welcome", " | official site"):
+            if title.lower().endswith(suffix):
+                title = title[: -len(suffix)].strip()
+        if len(title) < 2 or len(title) > 120:
+            return None
+        return title
+    except Exception as e:
+        logger.debug("Could not fetch title for domain %s: %s", domain, e)
+        return None
+
+
+def _normalize_company_for_compare(name: str) -> str:
+    """Normalize company name for similarity (lowercase, remove common suffixes)."""
+    if not name:
+        return ""
+    s = name.strip().lower()
+    for suffix in (" inc", " inc.", " corp", " corp.", " ltd", " ltd.", " llc", " co.", " company"):
+        if s.endswith(suffix):
+            s = s[: -len(suffix)].strip()
+    return re.sub(r"[^a-z0-9]", "", s)
+
+
+def _confirm_company_from_contact_domain(result: dict) -> dict:
+    """
+    Use the contact's email domain to confirm or fill company_name and company_domain.
+    If the contact email has a non-consumer domain (e.g. contact@company.com), use that domain
+    as company_domain and optionally resolve company name from the domain (e.g. fetch homepage title).
+    Reconcile with company name from the email body using internal confidence; frontend sees only
+    the chosen company_name and company_domain.
+    """
+    contact_email = (result.get("email") or "").strip()
+    if not contact_email or "@" not in contact_email:
+        return result
+    domain = _domain_from_email(contact_email)
+    if not domain or _is_consumer_email_domain(domain):
+        return result
+    # Work-domain: use it for company_domain at least
+    body_company = (result.get("company_name") or "").strip()
+    body_domain = (result.get("company_domain") or "").strip().lower()
+    # Ensure company_domain is set to contact's domain (we're confident it's work)
+    result = {**result, "company_domain": result.get("company_domain") or domain}
+    if body_domain and body_domain != domain:
+        result["company_domain"] = domain  # Prefer contact domain for consistency
+    # Try to get company name from domain (e.g. homepage title)
+    domain_company = _company_name_from_domain(domain)
+    if not domain_company:
+        # Keep body company if any; domain is already set
+        return result
+    if not body_company:
+        result["company_name"] = domain_company
+        return result
+    # Both present: reconcile by confidence (internal)
+    norm_body = _normalize_company_for_compare(body_company)
+    norm_domain = _normalize_company_for_compare(domain_company)
+    if norm_body and norm_domain and (norm_body in norm_domain or norm_domain in norm_body or norm_body[:8] == norm_domain[:8]):
+        # High confidence they refer to same company: keep body name (usually more formal)
+        return result
+    # Different: prefer body name if it looks formal (Inc/Corp etc.), else prefer domain title
+    if re.search(r"\b(inc|corp|ltd|llc|co\.?)\b", body_company, re.I):
+        return result
+    result["company_name"] = domain_company
+    return result
+
+
+def _extract_email_address(header: str) -> str:
+    """Extract a single email address from a header like 'Name <addr@domain.com>' or plain 'addr@domain.com'."""
+    if not header or "@" not in header:
+        return ""
+    s = header.strip()
+    if "<" in s and ">" in s:
+        m = re.search(r"<([^>]+)>", s)
+        return m.group(1).strip() if m else ""
+    return s
+
+
+def _contact_email_from_direction(sender: str, to: str, user_email: str) -> str:
+    """
+    Determine contact email from message direction when we know the current user's email.
+    - Inbox email (user received): contact = sender → return From address.
+    - Sent email (user sent): contact = receiver → return first To address (that is not the user).
+    """
+    u = user_email.strip().lower()
+    from_addr = _extract_email_address(sender or "")
+    if not from_addr:
+        return ""
+    # To can be multiple: "A <a@x.com>, B <b@y.com>" or "a@x.com, b@y.com"
+    to_raw = (to or "").strip()
+    if not to_raw:
+        to_addresses = []
+    else:
+        to_addresses = []
+        for part in re.split(r",\s*", to_raw):
+            addr = _extract_email_address(part)
+            if addr:
+                to_addresses.append(addr)
+    # User sent (From == user) → contact is recipient → use first To address
+    if from_addr.lower() == u:
+        for addr in to_addresses:
+            if addr.lower() != u:
+                return addr
+        return to_addresses[0] if to_addresses else ""
+    # User received (user is in To) → contact is sender → use From address
+    if any(addr.lower() == u for addr in to_addresses) or (to_addresses and to_addresses[0].lower() == u):
+        return from_addr
+    # To might be a single string without comma; try parsing whole To as one
+    single_to = _extract_email_address(to_raw)
+    if single_to.lower() == u:
+        return from_addr
+    return ""
+
+
 def extract_contact_from_email(
     sender: str,
     to: str,
     subject: str,
     body: str,
+    user_email: str | None = None,
 ) -> dict:
     """
     Analyse email (sender, to, subject, body) and return structured contact and company fields
     for populating the contact form and optional company creation.
-    Uses ANTHROPIC_API_KEY (Claude).
+    user_email: the connected Gmail address of the current user; used to determine which party
+    is "the contact" (the other party). If From == user_email, contact is the recipient (To).
+    If To == user_email, contact is the sender (From).
     Returns dict with: first_name, last_name, email, phone, job_title, company_name,
     company_domain, city, state_region, company_owner. Empty string for missing fields.
     """
-    if not (sender or to or subject or body or "").strip():
-        return {
-            "first_name": "",
-            "last_name": "",
-            "email": "",
-            "phone": "",
-            "job_title": "",
-            "company_name": "",
-            "company_domain": "",
-            "city": "",
-            "state_region": "",
-            "company_owner": "",
-        }
+    empty = {
+        "first_name": "",
+        "last_name": "",
+        "email": "",
+        "phone": "",
+        "job_title": "",
+        "company_name": "",
+        "company_domain": "",
+        "city": "",
+        "state_region": "",
+        "company_owner": "",
+    }
+    combined = (sender or "") + (to or "") + (subject or "") + (body or "")
+    if not combined.strip():
+        return empty
     client = _get_client()
-    prompt = """You are an assistant that extracts contact and company information from email content for CRM (HubSpot) contact creation.
 
-From the email headers and body below, extract every possible field. Use empty string "" for any field you cannot determine.
+    user_email_instruction = ""
+    if user_email and user_email.strip():
+        u = user_email.strip().lower()
+        user_email_instruction = (
+            f"\n**Current user's email (the person using this tool):** {user_email.strip()}\n"
+            "The CONTACT to extract is always the *other* party, not the user.\n"
+            "- If the email was SENT by the user (From matches the user's email): the contact is the RECIPIENT. Set contact email from the To field (extract the address only, e.g. from 'Name <a@b.com>' use 'a@b.com').\n"
+            "- If the email was RECEIVED by the user (To contains the user's email): the contact is the SENDER. Set contact email from the From field (extract the address only).\n"
+        )
 
-- first_name, last_name: of the main contact (often the sender or the person being discussed).
-- email: best email for the contact (often From address).
-- phone: any phone number mentioned (use digits only or E.164 if obvious).
-- job_title: job title of the contact if mentioned.
-- company_name: company or organization name (from signature, body, or email domain).
-- company_domain: website/domain of the company if mentioned or inferable (e.g. from email domain like @acme.com -> acme.com). Leave "" if unknown.
-- city, state_region: location if mentioned (city and state/region separately).
-- company_owner: if an owner or decision-maker is named, put name or identifier here; otherwise "".
+    prompt = """You are a CRM contact extraction agent. Your job is to extract structured contact and company information from a single email so it can be used to create or update a contact in HubSpot. Be thorough, consistent, and accurate.
 
-Respond with ONLY a JSON object in this exact format, no other text:
+**Rules**
+1. Extract the MAIN contact (one person) and their organization. The contact is the person we want to add to the CRM.
+2. For every field, extract the most specific value you can find. Use empty string "" only when you truly cannot determine a value.
+3. Output ONLY valid JSON in the exact format below. No markdown code fences, no explanation, no other text.
+""" + user_email_instruction + """
+**Field definitions**
+- **first_name, last_name:** The contact's given name and family name. Extract from salutations (e.g. "Dear John Smith" → first_name: "John", last_name: "Smith"), from signature (e.g. "Regards, Aryan" → if that is the contact), or from the contact's email display name. Split correctly; if only one name is given, put it in first_name and leave last_name "".
+- **email:** The contact's email address only (e.g. "john@company.com"). Use the rule above: if the user sent the email, contact email = To; if the user received it, contact email = From. Extract just the address from formats like "Name <email@domain.com>".
+- **phone:** Any phone number clearly associated with the contact. Digits only or E.164 if obvious; otherwise "".
+- **job_title:** Job title if stated (e.g. "VP of Sales"); otherwise "".
+- **company_name:** The company or organization the contact works for or is associated with. Look for: "your company X", "company X", "at X", "with X", "X Inc", "X Corp", "X Ltd", or the most prominent organization name in the body. Capitalize properly (e.g. "Facebook", not "facebook").
+- **company_domain:** The most likely official website domain for that company. Infer from the company name: e.g. "Facebook" → "facebook.com", "Microsoft" → "microsoft.com", "Acme Corp" → "acme.com". Use lowercase, no "www". Only leave "" if company_name is unknown or highly ambiguous.
+- **city, state_region:** Location if mentioned; otherwise "".
+- **company_owner:** Name or identifier of an owner/decision-maker at the company if mentioned; otherwise "".
+
+**Output format (JSON only):**
 {"first_name": "", "last_name": "", "email": "", "phone": "", "job_title": "", "company_name": "", "company_domain": "", "city": "", "state_region": "", "company_owner": ""}
 
-Email:
+---
+**Email to analyse:**
+
 From: """ + (sender or "") + """
 To: """ + (to or "") + """
 Subject: """ + (subject or "") + """
 
 Body:
-""" + (body or "")[:12000]
+""" + (body or "")[:14000]
+
     try:
         msg = client.messages.create(
             model=DEFAULT_MODEL,
@@ -444,10 +620,21 @@ Body:
             parsed = _parse_json_block(block.text)
             if isinstance(parsed, dict):
                 def s(v): return (v or "").strip() if v is not None else ""
-                return {
+                email_val = s(parsed.get("email"))
+                # Normalize: extract address from "Display Name <addr@domain.com>"
+                if email_val and "<" in email_val and ">" in email_val:
+                    email_val = _extract_email_address(email_val)
+                # Backend rule: when we know user_email, contact email is determined by direction.
+                # Inbox (user received) → contact = sender → use From.
+                # Sent (user sent) → contact = receiver → use To.
+                if user_email and user_email.strip():
+                    derived = _contact_email_from_direction(sender or "", to or "", user_email)
+                    if derived:
+                        email_val = derived
+                result = {
                     "first_name": s(parsed.get("first_name")),
                     "last_name": s(parsed.get("last_name")),
-                    "email": s(parsed.get("email")),
+                    "email": email_val,
                     "phone": s(parsed.get("phone")),
                     "job_title": s(parsed.get("job_title")),
                     "company_name": s(parsed.get("company_name")),
@@ -456,6 +643,8 @@ Body:
                     "state_region": s(parsed.get("state_region")),
                     "company_owner": s(parsed.get("company_owner")),
                 }
+                result = _confirm_company_from_contact_domain(result)
+                return result
     except Exception as e:
         logger.exception("Claude extract_contact_from_email error: %s", e)
     return {

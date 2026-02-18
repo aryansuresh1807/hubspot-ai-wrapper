@@ -39,8 +39,13 @@ export interface ExtractedContact {
   company_owner: string;
 }
 
-export async function gmailSearchEmails(query: string): Promise<GmailSearchMessage[]> {
-  const url = buildApiUrl('/api/v1/gmail/search', { q: query });
+export type GmailSearchFolder = 'all' | 'inbox' | 'sent';
+
+export async function gmailSearchEmails(
+  query: string,
+  folder: GmailSearchFolder = 'all',
+): Promise<GmailSearchMessage[]> {
+  const url = buildApiUrl('/api/v1/gmail/search', { q: query, folder });
   const headers = await getAuthHeaders();
   const res = await fetch(url, { method: 'GET', headers });
   if (!res.ok) {
