@@ -71,6 +71,7 @@ import type { CompanySearchResult } from '@/lib/api/companies';
 import {
   gmailSearchEmails,
   gmailExtractContact,
+  gmailGenerateActivityNote,
   type GmailSearchMessage,
   type ExtractedContact,
   type GmailSearchFolder,
@@ -452,8 +453,10 @@ interface EmailSnapshotForActivity {
 
 function ImportFromCommunicationSection({
   onUseExtractedData,
+  onNoteGenerated,
 }: {
   onUseExtractedData: (data: ExtractedContact, emailSnapshot: EmailSnapshotForActivity) => void;
+  onNoteGenerated: (note: string) => void;
 }): React.ReactElement {
   const [emailSearchQuery, setEmailSearchQuery] = React.useState('');
   const [emailSearchFolder, setEmailSearchFolder] = React.useState<GmailSearchFolder>('all');
@@ -466,6 +469,7 @@ function ImportFromCommunicationSection({
   const [extractLoading, setExtractLoading] = React.useState(false);
   const [extractedData, setExtractedData] = React.useState<ExtractedContact | null>(null);
   const [extractedDialogOpen, setExtractedDialogOpen] = React.useState(false);
+  const [noteError, setNoteError] = React.useState<string | null>(null);
   const debouncedEmailQuery = useDebouncedValue(emailSearchQuery.trim(), 400);
 
   React.useEffect(() => {
@@ -510,15 +514,15 @@ function ImportFromCommunicationSection({
 
   const handleConfirmSendForProcessing = async () => {
     if (!selectedEmailForImport) return;
+    setNoteError(null);
     setExtractLoading(true);
-    setConfirmSendOpen(false);
     try {
-      const data = await gmailExtractContact(selectedEmailForImport.id);
-      setExtractedData(data);
-      setExtractedDialogOpen(true);
-      // Keep selectedEmailForImport so we can pass subject/snippet when user clicks "Use extracted data"
-    } catch (_err) {
+      const { note } = await gmailGenerateActivityNote(selectedEmailForImport.id);
+      onNoteGenerated(note || '');
+      setConfirmSendOpen(false);
       setSelectedEmailForImport(null);
+    } catch (err) {
+      setNoteError(err instanceof Error ? err.message : 'Failed to generate note. Try again.');
     } finally {
       setExtractLoading(false);
     }
@@ -623,12 +627,12 @@ function ImportFromCommunicationSection({
         )}
       </CardContent>
 
-      <Dialog open={confirmSendOpen} onOpenChange={(open) => !open && (setConfirmSendOpen(false), setSelectedEmailForImport(null))}>
+      <Dialog open={confirmSendOpen} onOpenChange={(open) => !open && (setConfirmSendOpen(false), setSelectedEmailForImport(null), setNoteError(null))}>
         <DialogContent className="max-w-md" showClose={true}>
           <DialogHeader>
             <DialogTitle>Send for processing?</DialogTitle>
             <DialogDescription>
-              The selected email will be analysed by AI to extract contact and company details. You can then apply them to this activity.
+              The selected email will be sent to an AI agent to generate a brief activity note. The note will be placed in the Notes field so you don&apos;t have to write it manually.
             </DialogDescription>
           </DialogHeader>
           {selectedEmailForImport && (
@@ -637,13 +641,16 @@ function ImportFromCommunicationSection({
               <p><span className="text-muted-foreground">Subject:</span> {selectedEmailForImport.subject || '(no subject)'}</p>
             </div>
           )}
+          {noteError && (
+            <p className="text-sm text-status-at-risk">{noteError}</p>
+          )}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => (setConfirmSendOpen(false), setSelectedEmailForImport(null))}>
+            <Button type="button" variant="outline" onClick={() => (setConfirmSendOpen(false), setSelectedEmailForImport(null), setNoteError(null))}>
               Cancel
             </Button>
             <Button type="button" onClick={handleConfirmSendForProcessing} disabled={extractLoading}>
               {extractLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              Confirm
+              {extractLoading ? 'Generating note...' : 'Send for processing'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1165,7 +1172,10 @@ function ActivityPageContent(): React.ReactElement {
         </Card>
 
         {/* 2. Import from Communication (same rules & lookup as contacts; trimmed layout) */}
-        <ImportFromCommunicationSection onUseExtractedData={handleUseExtractedDataFromImport} />
+        <ImportFromCommunicationSection
+          onUseExtractedData={handleUseExtractedDataFromImport}
+          onNoteGenerated={(note) => setNoteContent(note)}
+        />
 
         {/* 3. Contact & Account */}
         <Card className="border-[1.5px]">

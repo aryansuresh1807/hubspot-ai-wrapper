@@ -87,3 +87,22 @@ export async function gmailExtractContact(messageId: string): Promise<ExtractedC
   }
   return res.json() as Promise<ExtractedContact>;
 }
+
+export interface GenerateActivityNoteResponse {
+  note: string;
+}
+
+export async function gmailGenerateActivityNote(messageId: string): Promise<GenerateActivityNoteResponse> {
+  const url = buildApiUrl('/api/v1/gmail/generate-activity-note');
+  const headers = await getAuthHeaders();
+  const res = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ message_id: messageId }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new ApiClientError(res.statusText, res.status, text || undefined);
+  }
+  return res.json() as Promise<GenerateActivityNoteResponse>;
+}

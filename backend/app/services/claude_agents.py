@@ -698,3 +698,57 @@ Body:
         "state_region": "",
         "company_owner": "",
     }
+
+
+def generate_activity_note_from_email(
+    sender: str,
+    to: str,
+    subject: str,
+    body: str,
+) -> str:
+    """
+    Use the full email (from, to, subject, body) as context and produce a brief
+    activity note suitable for the activity Notes field. This eliminates the
+    user having to manually write a note for that email.
+    Returns plain text only (no JSON).
+    """
+    combined = (sender or "") + (to or "") + (subject or "") + (body or "")
+    if not combined.strip():
+        return ""
+    client = _get_client()
+    body_truncated = (body or "")[:14000]
+    if len(body or "") > 14000:
+        body_truncated += "\n\n[Content truncated for length.]"
+
+    prompt = """You are an assistant that turns emails into brief activity notes for a CRM.
+
+Given the email below (From, To, Subject, and body), write a short, clear activity note that:
+- Summarizes what the email is about and any key points or outcomes.
+- Mentions the other party (contact) where relevant (e.g. "Discussion with John re: Q1 proposal").
+- Is written in past tense or neutral tone, suitable for a log entry (e.g. "Email from Jane: requested proposal by Friday. Follow-up call agreed for next week.").
+- Is concise: 2–5 sentences typically. No bullet lists unless the email had a clear list of action items; prefer flowing prose.
+
+Output ONLY the note text. No headings, no "Note:", no JSON, no markdown. Plain text only.
+
+---
+Email to turn into an activity note:
+
+From: """ + (sender or "") + """
+To: """ + (to or "") + """
+Subject: """ + (subject or "") + """
+
+Body:
+""" + body_truncated
+
+    try:
+        msg = client.messages.create(
+            model=DEFAULT_MODEL,
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = _get_first_text_from_message(msg)
+        if text and text.strip():
+            return text.strip()
+    except Exception as e:
+        logger.exception("Claude generate_activity_note_from_email error: %s", e)
+    return ""

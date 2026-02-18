@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from app.core.security import get_current_user_id
-from app.services.claude_agents import extract_contact_from_email
+from app.services.claude_agents import extract_contact_from_email, generate_activity_note_from_email
 from app.services.gmail_service import get_gmail_client
 from app.services.supabase_service import SupabaseService, get_supabase_service
 
@@ -226,6 +226,56 @@ async def gmail_get_message(
 
 class ExtractContactRequest(BaseModel):
     message_id: str
+
+
+class GenerateActivityNoteRequest(BaseModel):
+    message_id: str
+
+
+@router.post("/generate-activity-note")
+async def gmail_generate_activity_note(
+    body: GenerateActivityNoteRequest,
+    user_id: str = Depends(get_current_user_id),
+    supabase: SupabaseService = Depends(get_supabase_service),
+):
+    """
+    Fetch the given Gmail message and use Claude to generate a brief activity note
+    from the email content. The note is returned and can be placed in the activity
+    Notes field so the user does not have to write it manually.
+    """
+    message_id = (body.message_id or "").strip()
+    if not message_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="message_id is required")
+    service = await get_gmail_client(user_id, supabase)
+    if not service:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Gmail not connected. Connect Gmail from Integrations first.",
+        )
+    try:
+        msg = service.users().messages().get(
+            userId="me",
+            id=message_id,
+            format="full",
+        ).execute()
+    except Exception as e:
+        logger.exception("Gmail get message for generate-activity-note: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to fetch message.",
+        )
+    headers = _headers_map(msg)
+    email_from = headers.get("from", "")
+    email_to = headers.get("to", "")
+    subject = headers.get("subject", "")
+    body_text = _get_body_from_payload(msg.get("payload") or {})
+    note = generate_activity_note_from_email(
+        sender=email_from,
+        to=email_to,
+        subject=subject,
+        body=body_text,
+    )
+    return {"note": note or ""}
 
 
 @router.post("/extract-contact")
