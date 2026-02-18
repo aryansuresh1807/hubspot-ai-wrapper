@@ -64,6 +64,27 @@ function filterMessagesByFolder(
   if (folder === 'inbox') return messages.filter((m) => m.folder === 'inbox' || m.folder === 'both');
   return messages.filter((m) => m.folder === 'sent' || m.folder === 'both');
 }
+
+/** Format email date for display (e.g. "17 Feb 2025, 10:30" or "Today, 10:30"). */
+function formatEmailDate(msg: GmailSearchMessage): string {
+  const raw = msg.date_iso || msg.date;
+  if (!raw || !raw.trim()) return '—';
+  try {
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return msg.date?.trim() || '—';
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const dDate = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    if (dDate.getTime() === today.getTime()) return `Today, ${time}`;
+    if (dDate.getTime() === yesterday.getTime()) return `Yesterday, ${time}`;
+    return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) + ', ' + time;
+  } catch {
+    return msg.date?.trim() || '—';
+  }
+}
 import { cn } from '@/lib/utils';
 import { Mail } from 'lucide-react';
 
@@ -821,18 +842,28 @@ function ImportFromCommunicationColumn({
             )}
             {!extractLoading && emailSearchResults.length > 0 && (
               <ul
-                className="border border-border rounded-md divide-y divide-border max-h-[240px] overflow-y-auto"
+                className="border border-border rounded-md divide-y divide-border max-h-[320px] overflow-y-auto"
                 aria-label="Email search results"
               >
                 {emailSearchResults.map((msg) => (
                   <li key={msg.id}>
                     <button
                       type="button"
-                      className="w-full text-left px-3 py-1.5 hover:bg-muted/50 transition-colors"
+                      className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors"
                       onClick={() => handleSelectEmailForImport(msg)}
                     >
                       <p className="font-medium text-sm truncate">{msg.subject || '(no subject)'}</p>
-                      <p className="text-xs text-muted-foreground truncate">{msg.from}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{formatEmailDate(msg)}</p>
+                      {(emailSearchFolder === 'all' || emailSearchFolder === 'inbox') && (
+                        <p className="text-xs text-muted-foreground truncate mt-0.5">
+                          From: {msg.from || '—'}
+                        </p>
+                      )}
+                      {(emailSearchFolder === 'all' || emailSearchFolder === 'sent') && (
+                        <p className="text-xs text-muted-foreground truncate mt-0.5">
+                          To: {msg.to || '—'}
+                        </p>
+                      )}
                       {msg.snippet && (
                         <p className="text-xs text-muted-foreground truncate mt-0.5">{msg.snippet}</p>
                       )}

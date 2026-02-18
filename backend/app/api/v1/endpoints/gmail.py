@@ -4,6 +4,7 @@ Gmail API endpoints: test connection, search, get message, extract contact from 
 
 import base64
 import logging
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -154,6 +155,13 @@ async def gmail_search(
                 msg_folder = "inbox"
             else:
                 msg_folder = "inbox" if folder_lower == "inbox" else "sent" if folder_lower == "sent" else "inbox"
+            date_iso = ""
+            if internal_ts:
+                try:
+                    dt = datetime.fromtimestamp(internal_ts / 1000.0, tz=timezone.utc)
+                    date_iso = dt.isoformat()
+                except (OSError, ValueError):
+                    pass
             out.append({
                 "id": msg_id,
                 "subject": headers.get("subject", "(no subject)"),
@@ -161,6 +169,7 @@ async def gmail_search(
                 "to": headers.get("to", ""),
                 "snippet": snippet[:200] + ("..." if len(snippet) > 200 else ""),
                 "date": headers.get("date", ""),
+                "date_iso": date_iso,
                 "folder": msg_folder,
                 "_internalDate": internal_ts,
             })

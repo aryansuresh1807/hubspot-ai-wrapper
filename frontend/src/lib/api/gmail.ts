@@ -14,6 +14,8 @@ export interface GmailSearchMessage {
   to: string;
   snippet: string;
   date: string;
+  /** ISO date from backend (internalDate) for reliable formatting */
+  date_iso?: string;
   /** Set by backend when folder=all so frontend can filter without refetching */
   folder?: GmailMessageFolder;
 }
