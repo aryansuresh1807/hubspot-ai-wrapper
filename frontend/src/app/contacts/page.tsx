@@ -54,6 +54,16 @@ import {
   type ExtractedContact,
   type GmailSearchFolder,
 } from '@/lib/api/gmail';
+
+/** Filter messages by All / Inbox / Sent using each message's folder tag (from backend). */
+function filterMessagesByFolder(
+  messages: GmailSearchMessage[],
+  folder: GmailSearchFolder,
+): GmailSearchMessage[] {
+  if (folder === 'all') return messages;
+  if (folder === 'inbox') return messages.filter((m) => m.folder === 'inbox' || m.folder === 'both');
+  return messages.filter((m) => m.folder === 'sent' || m.folder === 'both');
+}
 import { cn } from '@/lib/utils';
 import { Mail } from 'lucide-react';
 
@@ -688,6 +698,9 @@ function ImportFromCommunicationColumn({
   const [emailSearchFolder, setEmailSearchFolder] = React.useState<GmailSearchFolder>('all');
   const [emailSearchResults, setEmailSearchResults] = React.useState<GmailSearchMessage[]>([]);
   const [emailSearchLoading, setEmailSearchLoading] = React.useState(false);
+  /** Full result set for current query (folder=all). When user switches to Inbox/Sent we filter this instead of refetching. */
+  const [emailSearchFullCache, setEmailSearchFullCache] = React.useState<GmailSearchMessage[] | null>(null);
+  const [emailSearchFullCacheQuery, setEmailSearchFullCacheQuery] = React.useState('');
   const [selectedEmailForImport, setSelectedEmailForImport] = React.useState<GmailSearchMessage | null>(null);
   const [confirmSendOpen, setConfirmSendOpen] = React.useState(false);
   const [extractLoading, setExtractLoading] = React.useState(false);
@@ -698,22 +711,37 @@ function ImportFromCommunicationColumn({
   React.useEffect(() => {
     if (!debouncedEmailQuery) {
       setEmailSearchResults([]);
+      setEmailSearchFullCache(null);
+      setEmailSearchFullCacheQuery('');
+      return;
+    }
+    const haveFullCacheForQuery =
+      emailSearchFullCache !== null && emailSearchFullCacheQuery === debouncedEmailQuery;
+    if (haveFullCacheForQuery) {
+      setEmailSearchResults(filterMessagesByFolder(emailSearchFullCache, emailSearchFolder));
       return;
     }
     let cancelled = false;
     setEmailSearchLoading(true);
-    gmailSearchEmails(debouncedEmailQuery, emailSearchFolder)
+    gmailSearchEmails(debouncedEmailQuery, 'all')
       .then((list) => {
-        if (!cancelled) setEmailSearchResults(list);
+        if (cancelled) return;
+        setEmailSearchFullCache(list);
+        setEmailSearchFullCacheQuery(debouncedEmailQuery);
+        setEmailSearchResults(filterMessagesByFolder(list, emailSearchFolder));
       })
       .catch(() => {
-        if (!cancelled) setEmailSearchResults([]);
+        if (!cancelled) {
+          setEmailSearchResults([]);
+          setEmailSearchFullCache(null);
+          setEmailSearchFullCacheQuery('');
+        }
       })
       .finally(() => {
         if (!cancelled) setEmailSearchLoading(false);
       });
     return () => { cancelled = true; };
-  }, [debouncedEmailQuery, emailSearchFolder]);
+  }, [debouncedEmailQuery, emailSearchFolder, emailSearchFullCache, emailSearchFullCacheQuery]);
 
   const handleSelectEmailForImport = (msg: GmailSearchMessage) => {
     setSelectedEmailForImport(msg);

@@ -143,6 +143,17 @@ async def gmail_search(
             snippet = (msg.get("snippet") or "").strip()
             internal_date_ms = msg.get("internalDate")
             internal_ts = int(internal_date_ms) if internal_date_ms else 0
+            label_ids = (msg.get("labelIds") or []) if isinstance(msg.get("labelIds"), list) else []
+            has_inbox = "INBOX" in label_ids
+            has_sent = "SENT" in label_ids
+            if has_sent and has_inbox:
+                msg_folder = "both"
+            elif has_sent:
+                msg_folder = "sent"
+            elif has_inbox:
+                msg_folder = "inbox"
+            else:
+                msg_folder = "inbox" if folder_lower == "inbox" else "sent" if folder_lower == "sent" else "inbox"
             out.append({
                 "id": msg_id,
                 "subject": headers.get("subject", "(no subject)"),
@@ -150,6 +161,7 @@ async def gmail_search(
                 "to": headers.get("to", ""),
                 "snippet": snippet[:200] + ("..." if len(snippet) > 200 else ""),
                 "date": headers.get("date", ""),
+                "folder": msg_folder,
                 "_internalDate": internal_ts,
             })
         # Ensure reverse chronological order (latest on top)

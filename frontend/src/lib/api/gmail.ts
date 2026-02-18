@@ -5,6 +5,8 @@
 import { getAuthHeaders } from './activities';
 import { ApiClientError, buildApiUrl } from './client';
 
+export type GmailMessageFolder = 'inbox' | 'sent' | 'both';
+
 export interface GmailSearchMessage {
   id: string;
   subject: string;
@@ -12,6 +14,8 @@ export interface GmailSearchMessage {
   to: string;
   snippet: string;
   date: string;
+  /** Set by backend when folder=all so frontend can filter without refetching */
+  folder?: GmailMessageFolder;
 }
 
 export interface GmailSearchResponse {
