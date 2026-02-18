@@ -377,3 +377,96 @@ def regenerate_single_draft(
     """Regenerate only one draft tone (e.g. after user clicks Regenerate for "formal")."""
     drafts = generate_drafts(current_note, previous_notes, tones=[tone])
     return drafts.get(tone, {"text": (current_note or "").strip(), "confidence": 70})
+
+
+# ---------------------------------------------------------------------------
+# 6. Extract contact + company from email (for "Import from communication")
+# ---------------------------------------------------------------------------
+
+def extract_contact_from_email(
+    sender: str,
+    to: str,
+    subject: str,
+    body: str,
+) -> dict:
+    """
+    Analyse email (sender, to, subject, body) and return structured contact and company fields
+    for populating the contact form and optional company creation.
+    Uses ANTHROPIC_API_KEY (Claude).
+    Returns dict with: first_name, last_name, email, phone, job_title, company_name,
+    company_domain, city, state_region, company_owner. Empty string for missing fields.
+    """
+    if not (sender or to or subject or body or "").strip():
+        return {
+            "first_name": "",
+            "last_name": "",
+            "email": "",
+            "phone": "",
+            "job_title": "",
+            "company_name": "",
+            "company_domain": "",
+            "city": "",
+            "state_region": "",
+            "company_owner": "",
+        }
+    client = _get_client()
+    prompt = """You are an assistant that extracts contact and company information from email content for CRM (HubSpot) contact creation.
+
+From the email headers and body below, extract every possible field. Use empty string "" for any field you cannot determine.
+
+- first_name, last_name: of the main contact (often the sender or the person being discussed).
+- email: best email for the contact (often From address).
+- phone: any phone number mentioned (use digits only or E.164 if obvious).
+- job_title: job title of the contact if mentioned.
+- company_name: company or organization name (from signature, body, or email domain).
+- company_domain: website/domain of the company if mentioned or inferable (e.g. from email domain like @acme.com -> acme.com). Leave "" if unknown.
+- city, state_region: location if mentioned (city and state/region separately).
+- company_owner: if an owner or decision-maker is named, put name or identifier here; otherwise "".
+
+Respond with ONLY a JSON object in this exact format, no other text:
+{"first_name": "", "last_name": "", "email": "", "phone": "", "job_title": "", "company_name": "", "company_domain": "", "city": "", "state_region": "", "company_owner": ""}
+
+Email:
+From: """ + (sender or "") + """
+To: """ + (to or "") + """
+Subject: """ + (subject or "") + """
+
+Body:
+""" + (body or "")[:12000]
+    try:
+        msg = client.messages.create(
+            model=DEFAULT_MODEL,
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        block = msg.content[0] if msg.content else None
+        if block and getattr(block, "text", None):
+            parsed = _parse_json_block(block.text)
+            if isinstance(parsed, dict):
+                def s(v): return (v or "").strip() if v is not None else ""
+                return {
+                    "first_name": s(parsed.get("first_name")),
+                    "last_name": s(parsed.get("last_name")),
+                    "email": s(parsed.get("email")),
+                    "phone": s(parsed.get("phone")),
+                    "job_title": s(parsed.get("job_title")),
+                    "company_name": s(parsed.get("company_name")),
+                    "company_domain": s(parsed.get("company_domain")),
+                    "city": s(parsed.get("city")),
+                    "state_region": s(parsed.get("state_region")),
+                    "company_owner": s(parsed.get("company_owner")),
+                }
+    except Exception as e:
+        logger.exception("Claude extract_contact_from_email error: %s", e)
+    return {
+        "first_name": "",
+        "last_name": "",
+        "email": "",
+        "phone": "",
+        "job_title": "",
+        "company_name": "",
+        "company_domain": "",
+        "city": "",
+        "state_region": "",
+        "company_owner": "",
+    }

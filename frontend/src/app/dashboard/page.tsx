@@ -16,7 +16,15 @@ import {
   WifiOff,
   AlertTriangle,
   FileText,
+  CalendarIcon,
 } from 'lucide-react';
+import { format } from 'date-fns';
+import { Calendar } from '@/components/ui/calendar';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -900,33 +908,61 @@ export default function DashboardPage(): React.ReactElement {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label htmlFor="date-from">Date from</Label>
-                <Input
-                  id="date-from"
-                  type="text"
-                  placeholder="DD-MM-YYYY"
-                  value={toDisplayDate(filterDraft.dateFrom)}
-                  onChange={(e) =>
-                    setFilterDraft((prev) => ({
-                      ...prev,
-                      dateFrom: parseDisplayDateToIso(e.target.value),
-                    }))
-                  }
-                />
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      id="date-from"
+                      variant="outline"
+                      className="w-full justify-start text-left font-normal"
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4 shrink-0" />
+                      {filterDraft.dateFrom
+                        ? format(new Date(filterDraft.dateFrom + 'T00:00:00'), 'dd MMM yyyy')
+                        : 'Pick date'}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={filterDraft.dateFrom ? new Date(filterDraft.dateFrom + 'T00:00:00') : undefined}
+                      onSelect={(d) =>
+                        setFilterDraft((prev) => ({
+                          ...prev,
+                          dateFrom: d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : '',
+                        }))
+                      }
+                    />
+                  </PopoverContent>
+                </Popover>
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="date-to">Date to</Label>
-                <Input
-                  id="date-to"
-                  type="text"
-                  placeholder="DD-MM-YYYY"
-                  value={toDisplayDate(filterDraft.dateTo)}
-                  onChange={(e) =>
-                    setFilterDraft((prev) => ({
-                      ...prev,
-                      dateTo: parseDisplayDateToIso(e.target.value),
-                    }))
-                  }
-                />
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      id="date-to"
+                      variant="outline"
+                      className="w-full justify-start text-left font-normal"
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4 shrink-0" />
+                      {filterDraft.dateTo
+                        ? format(new Date(filterDraft.dateTo + 'T00:00:00'), 'dd MMM yyyy')
+                        : 'Pick date'}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={filterDraft.dateTo ? new Date(filterDraft.dateTo + 'T00:00:00') : undefined}
+                      onSelect={(d) =>
+                        setFilterDraft((prev) => ({
+                          ...prev,
+                          dateTo: d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : '',
+                        }))
+                      }
+                    />
+                  </PopoverContent>
+                </Popover>
               </div>
             </div>
           </div>
@@ -953,14 +989,27 @@ export default function DashboardPage(): React.ReactElement {
             >
               <Filter className="h-4 w-4" />
             </Button>
-            <Input
-              type="text"
-              className="h-9 w-[140px]"
-              placeholder="DD-MM-YYYY"
-              value={toDisplayDate(datePickerValue)}
-              onChange={(e) => setDatePickerValue(parseDisplayDateToIso(e.target.value))}
-              aria-label="Filter by date"
-            />
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  className="h-9 w-[160px] justify-start text-left font-normal"
+                  aria-label="Filter by date"
+                >
+                  <CalendarIcon className="mr-2 h-4 w-4 shrink-0" />
+                  {datePickerValue
+                    ? format(new Date(datePickerValue + 'T00:00:00'), 'dd MMM yyyy')
+                    : 'Pick a date'}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <Calendar
+                  mode="single"
+                  selected={datePickerValue ? new Date(datePickerValue + 'T00:00:00') : undefined}
+                  onSelect={(d) => setDatePickerValue(d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : '')}
+                />
+              </PopoverContent>
+            </Popover>
             <Select value={sort} onValueChange={(v) => setSort(v as SortOption)}>
               <SelectTrigger className="w-[200px] h-9">
                 <ArrowUpDown className="h-4 w-4 opacity-50 mr-1 shrink-0" aria-hidden />

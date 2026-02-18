@@ -21,6 +21,15 @@ logger = logging.getLogger(__name__)
 GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 
 
+def _ensure_utc_aware(dt: Optional[datetime]) -> Optional[datetime]:
+    """Ensure datetime is timezone-aware (UTC). Google auth compares expiry to utcnow()."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def _credentials_from_tokens(
     access_token: str,
     refresh_token: Optional[str],
@@ -38,7 +47,7 @@ def _credentials_from_tokens(
         scopes=[GMAIL_READONLY_SCOPE],
     )
     if token_expiry:
-        creds.expiry = token_expiry
+        creds.expiry = _ensure_utc_aware(token_expiry)
     return creds
 
 
@@ -64,6 +73,7 @@ async def get_gmail_client(user_id: str, supabase: SupabaseService):
     if token_expiry_str:
         try:
             token_expiry = datetime.fromisoformat(token_expiry_str.replace("Z", "+00:00"))
+            token_expiry = _ensure_utc_aware(token_expiry)
         except Exception:
             pass
 

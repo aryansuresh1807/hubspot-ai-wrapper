@@ -47,7 +47,14 @@ import {
   type CompanySearchResult,
   type CompanyDetailResponse,
 } from '@/lib/api';
+import {
+  gmailSearchEmails,
+  gmailExtractContact,
+  type GmailSearchMessage,
+  type ExtractedContact,
+} from '@/lib/api/gmail';
 import { cn } from '@/lib/utils';
+import { Mail } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
 // Types & constants
@@ -304,21 +311,22 @@ function CompanySearchAutocomplete({
 }
 
 // ---------------------------------------------------------------------------
-// Contact tab
+// Right column: Contact search (search bar + results + view/edit/delete dialogs)
 // ---------------------------------------------------------------------------
 
-const CONTACTS_QUERY_KEY = 'contacts';
-
-function ContactTabContent({
-  addContactForm,
-  setAddContactForm,
-}: {
-  addContactForm: AddContactFormState;
-  setAddContactForm: React.Dispatch<React.SetStateAction<AddContactFormState>>;
-}): React.ReactElement {
+function ContactSearchPanel(): React.ReactElement {
   const queryClient = useQueryClient();
-  const router = useRouter();
   const [searchInput, setSearchInput] = React.useState('');
+  const debouncedSearch = useDebouncedValue(searchInput.trim(), 400);
+
+  const [infoDialogOpen, setInfoDialogOpen] = React.useState(false);
+  const [selectedContact, setSelectedContact] = React.useState<ApiContact | null>(null);
+  const [contactDetails, setContactDetails] = React.useState<ApiContact | null>(null);
+  const [contactDetailsLoading, setContactDetailsLoading] = React.useState(false);
+  const [deleteConfirmContact, setDeleteConfirmContact] = React.useState<ApiContact | null>(null);
+  const [deletingId, setDeletingId] = React.useState<string | null>(null);
+
+  const [editDialogOpen, setEditDialogOpen] = React.useState(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [firstName, setFirstName] = React.useState('');
   const [lastName, setLastName] = React.useState('');
@@ -331,13 +339,6 @@ function ContactTabContent({
   const [notes, setNotes] = React.useState('');
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [contactSubmitLoading, setContactSubmitLoading] = React.useState(false);
-  const [deletingId, setDeletingId] = React.useState<string | null>(null);
-  const [editDialogOpen, setEditDialogOpen] = React.useState(false);
-  const [infoDialogOpen, setInfoDialogOpen] = React.useState(false);
-  const [selectedContact, setSelectedContact] = React.useState<ApiContact | null>(null);
-  const [contactDetails, setContactDetails] = React.useState<ApiContact | null>(null);
-  const [contactDetailsLoading, setContactDetailsLoading] = React.useState(false);
-  const [deleteConfirmContact, setDeleteConfirmContact] = React.useState<ApiContact | null>(null);
   const [toast, setToast] = React.useState<{
     open: boolean;
     variant: 'success' | 'error' | 'default';
@@ -349,8 +350,6 @@ function ContactTabContent({
     setToast({ open: true, variant, title, description });
   };
 
-  const debouncedSearch = useDebouncedValue(searchInput.trim(), 400);
-
   const contactsQuery = useQuery({
     queryKey: [CONTACTS_QUERY_KEY, debouncedSearch],
     queryFn: async () => {
@@ -360,61 +359,35 @@ function ContactTabContent({
   });
 
   const contacts = React.useMemo(() => contactsQuery.data ?? [], [contactsQuery.data]);
-  const isContactsLoading = contactsQuery.isLoading;
   const isSearching = contactsQuery.isFetching && !!debouncedSearch;
   const contactError = contactsQuery.isError && contactsQuery.error
     ? (contactsQuery.error instanceof Error ? contactsQuery.error.message : 'Failed to load contacts')
     : null;
 
-  React.useEffect(() => {
-    if (contactsQuery.isError && contactsQuery.error) {
-      showToast('error', 'Failed to load contacts', contactsQuery.error instanceof Error ? contactsQuery.error.message : 'Try again.');
-    }
-  }, [contactsQuery.isError, contactsQuery.error]);
-
   const refreshContactList = React.useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: [CONTACTS_QUERY_KEY] });
   }, [queryClient]);
 
-  const resetContactForm = () => {
+  const resetEditForm = () => {
     setEditingId(null);
-    setFirstName('');
-    setLastName('');
-    setEmail('');
-    setPhone('');
-    setJobTitle('');
-    setAccountId('');
-    setAccountSearchDisplay('');
-    setRelationshipStatus('');
-    setNotes('');
-    setErrors({});
+    setFirstName(''); setLastName(''); setEmail(''); setPhone('');
+    setJobTitle(''); setAccountId(''); setAccountSearchDisplay('');
+    setRelationshipStatus(''); setNotes(''); setErrors({});
   };
 
   const loadContactIntoForm = (c: ApiContact) => {
     setEditingId(c.id);
-    setFirstName(c.first_name ?? '');
-    setLastName(c.last_name ?? '');
-    setEmail(c.email ?? '');
-    setPhone(c.phone ?? '');
-    setJobTitle(c.job_title ?? '');
-    setAccountId(c.company_id ?? '');
+    setFirstName(c.first_name ?? ''); setLastName(c.last_name ?? '');
+    setEmail(c.email ?? ''); setPhone(c.phone ?? '');
+    setJobTitle(c.job_title ?? ''); setAccountId(c.company_id ?? '');
     setAccountSearchDisplay(c.company_name ?? '');
     setRelationshipStatus(c.relationship_status ?? '');
-    setNotes(c.notes ?? '');
-    setErrors({});
-  };
-
-  const openEditDialog = (c: ApiContact) => {
-    loadContactIntoForm(c);
-    setInfoDialogOpen(false);
-    setEditDialogOpen(true);
+    setNotes(c.notes ?? ''); setErrors({});
   };
 
   const openInfoDialog = (c: ApiContact) => {
-    setSelectedContact(c);
-    setContactDetails(null);
-    setDeleteConfirmContact(null);
-    setInfoDialogOpen(true);
+    setSelectedContact(c); setContactDetails(null);
+    setDeleteConfirmContact(null); setInfoDialogOpen(true);
     setContactDetailsLoading(true);
     getContact(c.id)
       .then((full) => setContactDetails(full))
@@ -423,32 +396,26 @@ function ContactTabContent({
   };
 
   const closeInfoDialog = () => {
+    setInfoDialogOpen(false); setSelectedContact(null);
+    setContactDetails(null); setDeleteConfirmContact(null);
+  };
+
+  const openEditDialog = (c: ApiContact) => {
+    loadContactIntoForm(c);
     setInfoDialogOpen(false);
-    setSelectedContact(null);
-    setContactDetails(null);
-    setDeleteConfirmContact(null);
+    setEditDialogOpen(true);
   };
 
   const closeEditDialog = () => {
     setEditDialogOpen(false);
-    setEditingId(null);
-    resetContactForm();
+    resetEditForm();
   };
 
-  const handleContactSubmit = async (
-    e: React.FormEvent,
-    onEditSuccess?: () => void
-  ) => {
+  const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
-    const isEdit = !!editingId;
-    const fn = isEdit ? firstName.trim() : addContactForm.firstName.trim();
-    const ln = isEdit ? lastName.trim() : addContactForm.lastName.trim();
-    const em = isEdit ? email.trim() : addContactForm.email.trim();
-    const ph = isEdit ? phone.trim() : addContactForm.phone.trim();
-    const jt = isEdit ? jobTitle.trim() : addContactForm.jobTitle.trim();
-    const cid = isEdit ? accountId : addContactForm.accountId;
-    const rs = isEdit ? relationshipStatus : addContactForm.relationshipStatus;
-
+    if (!editingId) return;
+    const fn = firstName.trim(); const ln = lastName.trim();
+    const em = email.trim(); const ph = phone.trim();
     const next: Record<string, string> = {};
     if (!fn) next.firstName = 'First name is required';
     if (!ln) next.lastName = 'Last name is required';
@@ -459,44 +426,18 @@ function ContactTabContent({
     if (Object.keys(next).length > 0) return;
     setContactSubmitLoading(true);
     try {
-      if (editingId) {
-        await updateContact(editingId, {
-          first_name: fn,
-          last_name: ln,
-          email: em,
-          phone: ph || null,
-          job_title: jt || null,
-          company_id: cid || null,
-          relationship_status: rs || null,
-          notes: notes.trim() || null,
-        });
-        showToast('success', 'Contact updated');
-        await refreshContactList();
-        resetContactForm();
-        setEditingId(null);
-        onEditSuccess?.();
-      } else {
-        await createContact({
-          first_name: fn,
-          last_name: ln,
-          email: em,
-          phone: ph || null,
-          job_title: jt || null,
-          company_id: cid || null,
-          relationship_status: rs || null,
-          notes: null,
-        });
-        showToast('success', 'Contact created');
-        await refreshContactList();
-        setAddContactForm(INITIAL_ADD_CONTACT_FORM);
-        setEditingId(null);
-      }
+      await updateContact(editingId, {
+        first_name: fn, last_name: ln, email: em,
+        phone: ph || null, job_title: jobTitle.trim() || null,
+        company_id: accountId || null,
+        relationship_status: relationshipStatus || null,
+        notes: notes.trim() || null,
+      });
+      showToast('success', 'Contact updated');
+      await refreshContactList();
+      closeEditDialog();
     } catch (err) {
-      showToast(
-        'error',
-        editingId ? 'Failed to update contact' : 'Failed to create contact',
-        err instanceof Error ? err.message : 'Please try again.'
-      );
+      showToast('error', 'Failed to update contact', err instanceof Error ? err.message : 'Please try again.');
     } finally {
       setContactSubmitLoading(false);
     }
@@ -508,7 +449,6 @@ function ContactTabContent({
       await deleteContact(id);
       showToast('success', 'Contact deleted');
       await refreshContactList();
-      if (editingId === id) closeEditDialog();
       setDeleteConfirmContact(null);
       closeInfoDialog();
     } catch (err) {
@@ -518,71 +458,49 @@ function ContactTabContent({
     }
   };
 
-  const confirmDeleteContact = () => {
-    if (deleteConfirmContact) {
-      handleDelete(deleteConfirmContact.id);
-    }
-  };
-
   return (
-    <div className="space-y-6">
-      {/* Single search bar: contact name, email, or company name */}
+    <div className="space-y-4 p-4 border-b border-border">
+      {/* Search bar */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" aria-hidden />
         <Input
           type="search"
-          placeholder="Search by contact name, email, or company name..."
+          placeholder="Search by name, email, or company..."
           value={searchInput}
           onChange={(e) => setSearchInput(e.target.value)}
           className="pl-9"
           aria-label="Search contacts"
         />
-        {(isContactsLoading || isSearching) && (
+        {isSearching && (
           <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" aria-hidden />
         )}
       </div>
 
+      {/* Results */}
       {contactError && (
-        <p className="text-sm text-status-at-risk" role="alert">
-          {contactError}
-        </p>
+        <p className="text-sm text-status-at-risk" role="alert">{contactError}</p>
       )}
-
       {debouncedSearch.trim() ? (
-        isContactsLoading && contacts.length === 0 ? (
-          <div className="flex items-center justify-center py-12" aria-busy="true">
+        isSearching && contacts.length === 0 ? (
+          <div className="flex items-center justify-center py-8" aria-busy="true">
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-hidden />
           </div>
         ) : contacts.length === 0 ? (
           <Card className="border-dashed">
             <CardContent className="p-0">
-              <EmptyState
-                icon={Users}
-                title="No matches"
-                description="Try a different search or add a new contact below."
-              />
+              <EmptyState icon={Users} title="No matches" description="Try a different search term." />
             </CardContent>
           </Card>
         ) : (
-        <Card className="flex flex-col min-h-0">
-          <CardHeader className="shrink-0">
-            <CardTitle className="text-base">Results</CardTitle>
-            <p className="text-xs text-muted-foreground mt-1">
-              Click the info button to view details, edit, or delete.
-            </p>
-          </CardHeader>
-          <CardContent className="p-0 flex flex-col min-h-0">
-            <div
-              className="overflow-y-auto overscroll-contain border-t border-border"
-              style={{ maxHeight: 'min(420px, 50vh)' }}
-              aria-label="Contacts list"
-            >
-              <ul className="divide-y divide-border">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Results</CardTitle>
+              <p className="text-xs text-muted-foreground mt-1">Click the info button to view, edit, or delete.</p>
+            </CardHeader>
+            <CardContent className="p-0">
+              <ul className="divide-y divide-border border-t border-border">
                 {contacts.map((c) => (
-                  <li
-                    key={c.id}
-                    className="flex items-center justify-between gap-4 py-3 px-4 first:pt-3"
-                  >
+                  <li key={c.id} className="flex items-center justify-between gap-4 py-3 px-4">
                     <div className="min-w-0 flex-1">
                       <p className="font-medium truncate">
                         {[c.first_name, c.last_name].filter(Boolean).join(' ') || 'Unnamed'}
@@ -592,139 +510,81 @@ function ContactTabContent({
                         <p className="text-xs text-muted-foreground truncate mt-0.5">{c.company_name}</p>
                       )}
                     </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0"
-                        onClick={() => openInfoDialog(c)}
-                        aria-label={`View details for ${c.first_name ?? ''} ${c.last_name ?? ''}`}
-                      >
-                        <Info className="h-4 w-4" />
-                      </Button>
-                    </div>
+                    <Button
+                      type="button" variant="ghost" size="sm" className="h-8 w-8 p-0 shrink-0"
+                      onClick={() => openInfoDialog(c)}
+                      aria-label={`View details for ${c.first_name ?? ''} ${c.last_name ?? ''}`}
+                    >
+                      <Info className="h-4 w-4" />
+                    </Button>
                   </li>
                 ))}
               </ul>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
         )
       ) : null}
 
-      {/* Info popup: contact details + Edit + Delete (with confirmation) */}
+      {/* Info dialog */}
       <Dialog open={infoDialogOpen} onOpenChange={(open) => !open && closeInfoDialog()}>
         <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto" showClose={true}>
           <DialogHeader>
             <DialogTitle>Contact details</DialogTitle>
             <DialogDescription>
-              {selectedContact
-                ? [selectedContact.first_name, selectedContact.last_name].filter(Boolean).join(' ') || 'Unnamed'
-                : ''}
+              {selectedContact ? [selectedContact.first_name, selectedContact.last_name].filter(Boolean).join(' ') || 'Unnamed' : ''}
             </DialogDescription>
           </DialogHeader>
           {selectedContact && !deleteConfirmContact && (() => {
             const display = contactDetails ?? selectedContact;
             return (
-            <div className="space-y-4">
-              {contactDetailsLoading ? (
-                <div className="flex items-center justify-center py-8" aria-busy="true">
-                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-hidden />
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 gap-3 text-sm">
-                  <div>
-                    <span className="text-muted-foreground">Name</span>
-                    <p className="font-medium">{[display.first_name, display.last_name].filter(Boolean).join(' ') || '—'}</p>
+              <div className="space-y-4">
+                {contactDetailsLoading ? (
+                  <div className="flex items-center justify-center py-8" aria-busy="true">
+                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-hidden />
                   </div>
-                  <div>
-                    <span className="text-muted-foreground">Email</span>
-                    <p className="font-medium">{display.email ?? '—'}</p>
+                ) : (
+                  <div className="grid grid-cols-1 gap-3 text-sm">
+                    <div><span className="text-muted-foreground">Name</span><p className="font-medium">{[display.first_name, display.last_name].filter(Boolean).join(' ') || '—'}</p></div>
+                    <div><span className="text-muted-foreground">Email</span><p className="font-medium">{display.email ?? '—'}</p></div>
+                    {(display.mobile_phone ?? display.phone) ? (
+                      <>
+                        {display.mobile_phone && <div><span className="text-muted-foreground">Mobile</span><p className="font-medium">{display.mobile_phone}</p></div>}
+                        <div><span className="text-muted-foreground">Phone</span><p className="font-medium">{display.phone ?? '—'}</p></div>
+                      </>
+                    ) : (
+                      <div><span className="text-muted-foreground">Phone / Mobile</span><p className="font-medium">—</p></div>
+                    )}
+                    <div><span className="text-muted-foreground">Company</span><p className="font-medium">{display.company_name ?? display.company_id ?? '—'}</p></div>
+                    <div><span className="text-muted-foreground">Job title</span><p className="font-medium">{display.job_title ?? '—'}</p></div>
+                    {display.relationship_status && (
+                      <div><span className="text-muted-foreground">Relationship</span><p className="font-medium"><StatusChip status={display.relationship_status as RelationshipStatus} size="sm" /></p></div>
+                    )}
+                    {display.notes && <div><span className="text-muted-foreground">Notes</span><p className="font-medium whitespace-pre-wrap">{display.notes}</p></div>}
                   </div>
-                  {(display.mobile_phone ?? display.phone) ? (
-                    <>
-                      {display.mobile_phone && (
-                        <div>
-                          <span className="text-muted-foreground">Mobile</span>
-                          <p className="font-medium">{display.mobile_phone}</p>
-                        </div>
-                      )}
-                      <div>
-                        <span className="text-muted-foreground">Phone</span>
-                        <p className="font-medium">{display.phone ?? '—'}</p>
-                      </div>
-                    </>
-                  ) : (
-                    <div>
-                      <span className="text-muted-foreground">Phone / Mobile</span>
-                      <p className="font-medium">—</p>
-                    </div>
-                  )}
-                  <div>
-                    <span className="text-muted-foreground">Company</span>
-                    <p className="font-medium">{display.company_name ?? display.company_id ?? '—'}</p>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Job title</span>
-                    <p className="font-medium">{display.job_title ?? '—'}</p>
-                  </div>
-                  {display.relationship_status && (
-                    <div>
-                      <span className="text-muted-foreground">Relationship</span>
-                      <p className="font-medium">
-                        <StatusChip status={display.relationship_status as RelationshipStatus} size="sm" />
-                      </p>
-                    </div>
-                  )}
-                  {display.notes && (
-                    <div>
-                      <span className="text-muted-foreground">Notes</span>
-                      <p className="font-medium whitespace-pre-wrap">{display.notes}</p>
-                    </div>
-                  )}
-                </div>
-              )}
-              {!contactDetailsLoading && (
-                <DialogFooter>
-                  <Button type="button" variant="outline" onClick={() => selectedContact && openEditDialog(selectedContact)}>
-                    <Pencil className="h-4 w-4 mr-1" />
-                    Edit
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="text-status-at-risk hover:text-status-at-risk"
-                    onClick={() => setDeleteConfirmContact(selectedContact)}
-                  >
-                    <Trash2 className="h-4 w-4 mr-1" />
-                    Delete
-                  </Button>
-                </DialogFooter>
-              )}
-            </div>
+                )}
+                {!contactDetailsLoading && (
+                  <DialogFooter>
+                    <Button type="button" variant="outline" onClick={() => selectedContact && openEditDialog(selectedContact)}>
+                      <Pencil className="h-4 w-4 mr-1" />Edit
+                    </Button>
+                    <Button type="button" variant="outline" className="text-status-at-risk hover:text-status-at-risk" onClick={() => setDeleteConfirmContact(selectedContact)}>
+                      <Trash2 className="h-4 w-4 mr-1" />Delete
+                    </Button>
+                  </DialogFooter>
+                )}
+              </div>
             );
           })()}
           {selectedContact && deleteConfirmContact && (
             <div className="space-y-4">
-              <p className="text-sm">
-                Are you sure you want to delete{' '}
+              <p className="text-sm">Are you sure you want to delete{' '}
                 <strong>{[deleteConfirmContact.first_name, deleteConfirmContact.last_name].filter(Boolean).join(' ') || 'this contact'}</strong>?
                 This cannot be undone.
               </p>
               <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setDeleteConfirmContact(null)}>
-                  No, keep
-                </Button>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  onClick={confirmDeleteContact}
-                  disabled={deletingId !== null}
-                >
-                  {deletingId === deleteConfirmContact.id ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : null}
+                <Button type="button" variant="outline" onClick={() => setDeleteConfirmContact(null)}>No, keep</Button>
+                <Button type="button" variant="destructive" onClick={() => handleDelete(deleteConfirmContact.id)} disabled={deletingId !== null}>
+                  {deletingId === deleteConfirmContact.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                   Yes, delete
                 </Button>
               </DialogFooter>
@@ -733,98 +593,46 @@ function ContactTabContent({
         </DialogContent>
       </Dialog>
 
-      {/* Edit Contact Dialog */}
+      {/* Edit dialog */}
       <Dialog open={editDialogOpen} onOpenChange={(open) => !open && closeEditDialog()}>
         <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto" showClose={true}>
           <DialogHeader>
             <DialogTitle>Edit contact</DialogTitle>
-            <DialogDescription>
-              Update details below. Changes are saved to HubSpot when you click Save.
-            </DialogDescription>
+            <DialogDescription>Update details below. Changes are saved to HubSpot when you click Save.</DialogDescription>
           </DialogHeader>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleContactSubmit(e, () => setEditDialogOpen(false));
-            }}
-            className="space-y-4"
-          >
+          <form onSubmit={handleUpdate} className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <Label htmlFor="edit-firstName">First Name *</Label>
-                <Input
-                  id="edit-firstName"
-                  value={firstName}
-                  onChange={(e) => setFirstName(e.target.value)}
-                  className="mt-1"
-                  error={!!errors.firstName}
-                />
-                {errors.firstName && (
-                  <p className="text-xs text-status-at-risk mt-1">{errors.firstName}</p>
-                )}
+                <Label htmlFor="sp-edit-firstName">First Name *</Label>
+                <Input id="sp-edit-firstName" value={firstName} onChange={(e) => setFirstName(e.target.value)} className="mt-1" error={!!errors.firstName} />
+                {errors.firstName && <p className="text-xs text-status-at-risk mt-1">{errors.firstName}</p>}
               </div>
               <div>
-                <Label htmlFor="edit-lastName">Last Name *</Label>
-                <Input
-                  id="edit-lastName"
-                  value={lastName}
-                  onChange={(e) => setLastName(e.target.value)}
-                  className="mt-1"
-                  error={!!errors.lastName}
-                />
-                {errors.lastName && (
-                  <p className="text-xs text-status-at-risk mt-1">{errors.lastName}</p>
-                )}
+                <Label htmlFor="sp-edit-lastName">Last Name *</Label>
+                <Input id="sp-edit-lastName" value={lastName} onChange={(e) => setLastName(e.target.value)} className="mt-1" error={!!errors.lastName} />
+                {errors.lastName && <p className="text-xs text-status-at-risk mt-1">{errors.lastName}</p>}
               </div>
             </div>
             <div>
-              <Label htmlFor="edit-email">Email *</Label>
-              <Input
-                id="edit-email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="mt-1"
-                error={!!errors.email}
-              />
-              {errors.email && (
-                <p className="text-xs text-status-at-risk mt-1">{errors.email}</p>
-              )}
+              <Label htmlFor="sp-edit-email">Email *</Label>
+              <Input id="sp-edit-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="mt-1" error={!!errors.email} />
+              {errors.email && <p className="text-xs text-status-at-risk mt-1">{errors.email}</p>}
             </div>
             <div>
-              <Label htmlFor="edit-phone">Phone</Label>
-              <Input
-                id="edit-phone"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                className="mt-1"
-                error={!!errors.phone}
-              />
-              {errors.phone && (
-                <p className="text-xs text-status-at-risk mt-1">{errors.phone}</p>
-              )}
+              <Label htmlFor="sp-edit-phone">Phone</Label>
+              <Input id="sp-edit-phone" value={phone} onChange={(e) => setPhone(e.target.value)} className="mt-1" error={!!errors.phone} />
+              {errors.phone && <p className="text-xs text-status-at-risk mt-1">{errors.phone}</p>}
             </div>
             <div>
-              <Label htmlFor="edit-jobTitle">Job Title</Label>
-              <Input
-                id="edit-jobTitle"
-                value={jobTitle}
-                onChange={(e) => setJobTitle(e.target.value)}
-                className="mt-1"
-              />
+              <Label htmlFor="sp-edit-jobTitle">Job Title</Label>
+              <Input id="sp-edit-jobTitle" value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} className="mt-1" />
             </div>
             <div>
               <Label>Account</Label>
               <CompanySearchAutocomplete
                 value={accountSearchDisplay || ''}
-                onChange={(v) => {
-                  setAccountSearchDisplay(v);
-                  if (!v) setAccountId('');
-                }}
-                onSelect={(c) => {
-                  setAccountId(c.id);
-                  setAccountSearchDisplay(c.name ?? c.id);
-                }}
+                onChange={(v) => { setAccountSearchDisplay(v); if (!v) setAccountId(''); }}
+                onSelect={(c) => { setAccountId(c.id); setAccountSearchDisplay(c.name ?? c.id); }}
                 placeholder="Search companies..."
                 className="mt-1"
               />
@@ -832,43 +640,24 @@ function ContactTabContent({
             <div>
               <Label>Relationship Status</Label>
               <Select value={relationshipStatus} onValueChange={setRelationshipStatus}>
-                <SelectTrigger className="mt-1">
-                  <SelectValue placeholder="Select status" />
-                </SelectTrigger>
+                <SelectTrigger className="mt-1"><SelectValue placeholder="Select status" /></SelectTrigger>
                 <SelectContent>
                   {RELATIONSHIP_OPTIONS.map((s) => (
                     <SelectItem key={s} value={s}>
-                      <span className="flex items-center gap-2">
-                        <StatusChip status={s} size="sm" />
-                      </span>
+                      <span className="flex items-center gap-2"><StatusChip status={s} size="sm" /></span>
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <Label htmlFor="edit-notes">Notes</Label>
-              <Textarea
-                id="edit-notes"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                className="mt-1 min-h-[80px]"
-                placeholder="Add notes..."
-              />
+              <Label htmlFor="sp-edit-notes">Notes</Label>
+              <Textarea id="sp-edit-notes" value={notes} onChange={(e) => setNotes(e.target.value)} className="mt-1 min-h-[80px]" placeholder="Add notes..." />
             </div>
             <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={closeEditDialog}
-                disabled={contactSubmitLoading}
-              >
-                Cancel
-              </Button>
+              <Button type="button" variant="outline" onClick={closeEditDialog} disabled={contactSubmitLoading}>Cancel</Button>
               <Button type="submit" disabled={contactSubmitLoading}>
-                {contactSubmitLoading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : null}
+                {contactSubmitLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                 Save changes
               </Button>
             </DialogFooter>
@@ -876,145 +665,503 @@ function ContactTabContent({
         </DialogContent>
       </Dialog>
 
-      {!editingId && (
-      <div>
-        {/* Add contact form */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Add contact</CardTitle>
-            <p className="text-sm text-muted-foreground mt-1">
-              Create a new contact. It will be added to HubSpot.
+      <Toast open={toast.open} onOpenChange={(open) => !open && setToast((p) => ({ ...p, open: false }))} variant={toast.variant}>
+        <ToastTitle>{toast.title}</ToastTitle>
+        {toast.description && <ToastDescription>{toast.description}</ToastDescription>}
+        <ToastClose />
+      </Toast>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Right column: Import from communication (shared across Contact / Account tabs)
+// ---------------------------------------------------------------------------
+
+function ImportFromCommunicationColumn({
+  onUseExtractedData,
+}: {
+  onUseExtractedData: (data: ExtractedContact) => void;
+}): React.ReactElement {
+  const [emailSearchQuery, setEmailSearchQuery] = React.useState('');
+  const [emailSearchResults, setEmailSearchResults] = React.useState<GmailSearchMessage[]>([]);
+  const [emailSearchLoading, setEmailSearchLoading] = React.useState(false);
+  const [selectedEmailForImport, setSelectedEmailForImport] = React.useState<GmailSearchMessage | null>(null);
+  const [confirmSendOpen, setConfirmSendOpen] = React.useState(false);
+  const [extractLoading, setExtractLoading] = React.useState(false);
+  const [extractedData, setExtractedData] = React.useState<ExtractedContact | null>(null);
+  const [extractedDialogOpen, setExtractedDialogOpen] = React.useState(false);
+  const debouncedEmailQuery = useDebouncedValue(emailSearchQuery.trim(), 400);
+
+  React.useEffect(() => {
+    if (!debouncedEmailQuery) {
+      setEmailSearchResults([]);
+      return;
+    }
+    let cancelled = false;
+    setEmailSearchLoading(true);
+    gmailSearchEmails(debouncedEmailQuery)
+      .then((list) => {
+        if (!cancelled) setEmailSearchResults(list);
+      })
+      .catch(() => {
+        if (!cancelled) setEmailSearchResults([]);
+      })
+      .finally(() => {
+        if (!cancelled) setEmailSearchLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [debouncedEmailQuery]);
+
+  const handleSelectEmailForImport = (msg: GmailSearchMessage) => {
+    setSelectedEmailForImport(msg);
+    setConfirmSendOpen(true);
+  };
+
+  const handleConfirmSendForProcessing = async () => {
+    if (!selectedEmailForImport) return;
+    setExtractLoading(true);
+    setConfirmSendOpen(false);
+    try {
+      const data = await gmailExtractContact(selectedEmailForImport.id);
+      setExtractedData(data);
+      setExtractedDialogOpen(true);
+      setSelectedEmailForImport(null);
+    } catch (_err) {
+      // Error could be surfaced via toast if desired
+    } finally {
+      setExtractLoading(false);
+    }
+  };
+
+  const handleUseExtractedData = () => {
+    if (!extractedData) return;
+    onUseExtractedData(extractedData);
+    setExtractedDialogOpen(false);
+    setExtractedData(null);
+  };
+
+  return (
+    <div className="h-full min-h-0 flex flex-col p-4">
+      <Card className="flex-1 min-h-0 flex flex-col">
+        <CardHeader className="shrink-0">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Mail className="h-4 w-4" />
+            Import from communication
+          </CardTitle>
+          <p className="text-sm text-muted-foreground mt-1">
+            Search your Gmail and import contact details from an email.
+          </p>
+        </CardHeader>
+        <CardContent className="flex-1 min-h-0 overflow-y-auto">
+          <div className="space-y-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" aria-hidden />
+              <Input
+                type="search"
+                placeholder="Search email by keywords..."
+                value={emailSearchQuery}
+                onChange={(e) => setEmailSearchQuery(e.target.value)}
+                className="pl-9"
+                aria-label="Search Gmail"
+              />
+              {emailSearchLoading && (
+                <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" aria-hidden />
+              )}
+            </div>
+            {extractLoading && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Analysing email...
+              </div>
+            )}
+            {!extractLoading && emailSearchResults.length > 0 && (
+              <ul
+                className="border border-border rounded-md divide-y divide-border max-h-[280px] overflow-y-auto"
+                aria-label="Email search results"
+              >
+                {emailSearchResults.map((msg) => (
+                  <li key={msg.id}>
+                    <button
+                      type="button"
+                      className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors"
+                      onClick={() => handleSelectEmailForImport(msg)}
+                    >
+                      <p className="font-medium text-sm truncate">{msg.subject || '(no subject)'}</p>
+                      <p className="text-xs text-muted-foreground truncate">{msg.from}</p>
+                      {msg.snippet && (
+                        <p className="text-xs text-muted-foreground truncate mt-0.5">{msg.snippet}</p>
+                      )}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {!extractLoading && debouncedEmailQuery && emailSearchResults.length === 0 && !emailSearchLoading && (
+              <p className="text-sm text-muted-foreground py-2">No emails found. Try different keywords.</p>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Dialog open={confirmSendOpen} onOpenChange={(open) => !open && (setConfirmSendOpen(false), setSelectedEmailForImport(null))}>
+        <DialogContent className="max-w-md" showClose={true}>
+          <DialogHeader>
+            <DialogTitle>Send for processing?</DialogTitle>
+            <DialogDescription>
+              The selected email will be analysed by AI to extract contact and company details. Only subject, sender, and content are used.
+            </DialogDescription>
+          </DialogHeader>
+          {selectedEmailForImport && (
+            <div className="rounded-md border border-border bg-muted/30 p-3 text-sm space-y-1">
+              <p><span className="text-muted-foreground">From:</span> {selectedEmailForImport.from}</p>
+              <p><span className="text-muted-foreground">Subject:</span> {selectedEmailForImport.subject || '(no subject)'}</p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => (setConfirmSendOpen(false), setSelectedEmailForImport(null))}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={handleConfirmSendForProcessing} disabled={extractLoading}>
+              {extractLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Confirm
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={extractedDialogOpen} onOpenChange={(open) => !open && (setExtractedDialogOpen(false), setExtractedData(null))}>
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto" showClose={true}>
+          <DialogHeader>
+            <DialogTitle>Recognised fields</DialogTitle>
+            <DialogDescription>
+              Review the extracted contact and company details, then use them to fill the contact form.
+            </DialogDescription>
+          </DialogHeader>
+          {extractedData && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-2 text-sm">
+                {([
+                  ['First name', extractedData.first_name],
+                  ['Last name', extractedData.last_name],
+                  ['Email', extractedData.email],
+                  ['Phone', extractedData.phone],
+                  ['Job title', extractedData.job_title],
+                  ['Company', extractedData.company_name],
+                  ['Company domain', extractedData.company_domain],
+                  ['City', extractedData.city],
+                  ['State / Region', extractedData.state_region],
+                  ['Company owner', extractedData.company_owner],
+                ] as const).map(([label, value]) => (
+                  <div key={label}>
+                    <span className="text-muted-foreground">{label}:</span>{' '}
+                    <span className="font-medium">{value || '—'}</span>
+                  </div>
+                ))}
+              </div>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => (setExtractedDialogOpen(false), setExtractedData(null))}>
+                  Cancel
+                </Button>
+                <Button type="button" onClick={handleUseExtractedData}>
+                  Use extracted data
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Contact tab
+// ---------------------------------------------------------------------------
+
+const CONTACTS_QUERY_KEY = 'contacts';
+
+function ContactTabContent({
+  addContactForm,
+  setAddContactForm,
+  extractedDataForCompanyPicker,
+  onClearCompanyPicker,
+}: {
+  addContactForm: AddContactFormState;
+  setAddContactForm: React.Dispatch<React.SetStateAction<AddContactFormState>>;
+  extractedDataForCompanyPicker: ExtractedContact | null;
+  onClearCompanyPicker: () => void;
+}): React.ReactElement {
+  const queryClient = useQueryClient();
+  const router = useRouter();
+  const [errors, setErrors] = React.useState<Record<string, string>>({});
+  const [contactSubmitLoading, setContactSubmitLoading] = React.useState(false);
+  const [companyMatchResults, setCompanyMatchResults] = React.useState<CompanySearchResult[]>([]);
+  const [companyMatchLoading, setCompanyMatchLoading] = React.useState(false);
+  const [toast, setToast] = React.useState<{
+    open: boolean;
+    variant: 'success' | 'error' | 'default';
+    title: string;
+    description?: string;
+  }>({ open: false, variant: 'default', title: '' });
+
+  const showToast = (variant: 'success' | 'error', title: string, description?: string) => {
+    setToast({ open: true, variant, title, description });
+  };
+
+  const refreshContactList = React.useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: [CONTACTS_QUERY_KEY] });
+  }, [queryClient]);
+
+  React.useEffect(() => {
+    if (!extractedDataForCompanyPicker) { setCompanyMatchResults([]); return; }
+    const companyName = (extractedDataForCompanyPicker.company_name || '').trim();
+    if (!companyName) { setCompanyMatchResults([]); return; }
+    let cancelled = false;
+    setCompanyMatchLoading(true);
+    searchCompanies(companyName)
+      .then((list) => { if (!cancelled) setCompanyMatchResults(list); })
+      .catch(() => { if (!cancelled) setCompanyMatchResults([]); })
+      .finally(() => { if (!cancelled) setCompanyMatchLoading(false); });
+    return () => { cancelled = true; };
+  }, [extractedDataForCompanyPicker]);
+
+  const handleConfirmCompanyMatch = (c: CompanySearchResult) => {
+    setAddContactForm((prev) => ({ ...prev, accountId: c.id, accountSearchDisplay: c.name ?? c.id }));
+    setCompanyMatchResults([]);
+    onClearCompanyPicker();
+  };
+
+  const handleCreateAccountFromImport = () => {
+    const data = extractedDataForCompanyPicker;
+    if (!data) return;
+    const params = new URLSearchParams();
+    params.set('tab', 'account'); params.set('returnToContact', '1');
+    if (data.company_name) params.set('companyName', data.company_name);
+    if (data.company_domain) params.set('domain', data.company_domain);
+    if (data.city) params.set('city', data.city);
+    if (data.state_region) params.set('stateRegion', data.state_region);
+    if (data.company_owner) params.set('companyOwner', data.company_owner);
+    setCompanyMatchResults([]);
+    onClearCompanyPicker();
+    router.replace(`/contacts?${params.toString()}`, { scroll: false });
+  };
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const fn = addContactForm.firstName.trim(); const ln = addContactForm.lastName.trim();
+    const em = addContactForm.email.trim(); const ph = addContactForm.phone.trim();
+    const next: Record<string, string> = {};
+    if (!fn) next.firstName = 'First name is required';
+    if (!ln) next.lastName = 'Last name is required';
+    if (!em) next.email = 'Email is required';
+    else if (!validateEmail(em)) next.email = 'Enter a valid email address';
+    if (ph && !validatePhone(ph)) next.phone = 'Enter a valid phone number';
+    setErrors(next);
+    if (Object.keys(next).length > 0) return;
+    setContactSubmitLoading(true);
+    try {
+      await createContact({
+        first_name: fn, last_name: ln, email: em,
+        phone: ph || null, job_title: addContactForm.jobTitle.trim() || null,
+        company_id: addContactForm.accountId || null,
+        relationship_status: addContactForm.relationshipStatus || null,
+        notes: null,
+      });
+      showToast('success', 'Contact created');
+      await refreshContactList();
+      setAddContactForm(INITIAL_ADD_CONTACT_FORM);
+    } catch (err) {
+      showToast('error', 'Failed to create contact', err instanceof Error ? err.message : 'Please try again.');
+    } finally {
+      setContactSubmitLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col flex-1 min-h-0 gap-6">
+      {/* Add contact card — stretches so bottom aligns with Import from communication card */}
+      <div className="flex-1 min-h-0 flex flex-col">
+        <Card className="h-full flex flex-col">
+            <CardHeader className="shrink-0">
+              <CardTitle className="text-base">Add contact</CardTitle>
+              <p className="text-sm text-muted-foreground mt-1">
+                Create a new contact. It will be added to HubSpot.
+              </p>
+            </CardHeader>
+            <CardContent className="flex-1 min-h-0 overflow-y-auto">
+              <form onSubmit={handleCreate} className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="firstName">First Name *</Label>
+                    <Input
+                      id="firstName"
+                      value={addContactForm.firstName}
+                      onChange={(e) => setAddContactForm((p) => ({ ...p, firstName: e.target.value }))}
+                      className="mt-1"
+                      error={!!errors.firstName}
+                    />
+                    {errors.firstName && (
+                      <p className="text-xs text-status-at-risk mt-1">{errors.firstName}</p>
+                    )}
+                  </div>
+                  <div>
+                    <Label htmlFor="lastName">Last Name *</Label>
+                    <Input
+                      id="lastName"
+                      value={addContactForm.lastName}
+                      onChange={(e) => setAddContactForm((p) => ({ ...p, lastName: e.target.value }))}
+                      className="mt-1"
+                      error={!!errors.lastName}
+                    />
+                    {errors.lastName && (
+                      <p className="text-xs text-status-at-risk mt-1">{errors.lastName}</p>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <Label htmlFor="email">Email *</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    value={addContactForm.email}
+                    onChange={(e) => setAddContactForm((p) => ({ ...p, email: e.target.value }))}
+                    className="mt-1"
+                    error={!!errors.email}
+                  />
+                  {errors.email && (
+                    <p className="text-xs text-status-at-risk mt-1">{errors.email}</p>
+                  )}
+                </div>
+                <div>
+                  <Label htmlFor="phone">Phone</Label>
+                  <Input
+                    id="phone"
+                    value={addContactForm.phone}
+                    onChange={(e) => setAddContactForm((p) => ({ ...p, phone: e.target.value }))}
+                    className="mt-1"
+                    error={!!errors.phone}
+                  />
+                  {errors.phone && (
+                    <p className="text-xs text-status-at-risk mt-1">{errors.phone}</p>
+                  )}
+                </div>
+                <div>
+                  <Label htmlFor="jobTitle">Job Title</Label>
+                  <Input
+                    id="jobTitle"
+                    value={addContactForm.jobTitle}
+                    onChange={(e) => setAddContactForm((p) => ({ ...p, jobTitle: e.target.value }))}
+                    className="mt-1"
+                  />
+                </div>
+                <div>
+                  <Label>Account</Label>
+                  <CompanySearchAutocomplete
+                    value={addContactForm.accountSearchDisplay}
+                    onChange={(v) => {
+                      setAddContactForm((p) => ({ ...p, accountSearchDisplay: v, ...(v ? {} : { accountId: '' }) }));
+                    }}
+                    onSelect={(c) => {
+                      setAddContactForm((p) => ({
+                        ...p,
+                        accountId: c.id,
+                        accountSearchDisplay: c.name ?? c.id,
+                      }));
+                    }}
+                    placeholder="Search companies..."
+                    className="mt-1"
+                  />
+                  <Button
+                    type="button"
+                    variant="link"
+                    className="mt-1.5 h-auto p-0 text-sm text-primary"
+                    onClick={() => router.replace('/contacts?tab=account&returnToContact=1')}
+                  >
+                    + Create account
+                  </Button>
+                </div>
+                <div>
+                  <Label>Relationship Status</Label>
+                  <Select
+                    value={addContactForm.relationshipStatus}
+                    onValueChange={(v) => setAddContactForm((p) => ({ ...p, relationshipStatus: v }))}
+                  >
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder="Select status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {RELATIONSHIP_OPTIONS.map((s) => (
+                        <SelectItem key={s} value={s}>
+                          <span className="flex items-center gap-2">
+                            <StatusChip status={s} size="sm" />
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-wrap gap-2 pt-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={handleCreate}
+                    disabled={contactSubmitLoading}
+                  >
+                    {contactSubmitLoading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : null}
+                    Create Contact
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
+
+      {/* Company match picker (after "Use extracted data" from Import column) */}
+      {extractedDataForCompanyPicker && (
+        <Card className="border-status-warm/30">
+          <CardHeader className="py-3">
+            <CardTitle className="text-sm">Match account</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Select a company to associate with this contact, or create a new one.
             </p>
           </CardHeader>
-          <CardContent>
-            <form onSubmit={(e) => { e.preventDefault(); }} className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="firstName">First Name *</Label>
-                  <Input
-                    id="firstName"
-                    value={addContactForm.firstName}
-                    onChange={(e) => setAddContactForm((p) => ({ ...p, firstName: e.target.value }))}
-                    className="mt-1"
-                    error={!!errors.firstName}
-                  />
-                  {errors.firstName && (
-                    <p className="text-xs text-status-at-risk mt-1">{errors.firstName}</p>
-                  )}
-                </div>
-                <div>
-                  <Label htmlFor="lastName">Last Name *</Label>
-                  <Input
-                    id="lastName"
-                    value={addContactForm.lastName}
-                    onChange={(e) => setAddContactForm((p) => ({ ...p, lastName: e.target.value }))}
-                    className="mt-1"
-                    error={!!errors.lastName}
-                  />
-                  {errors.lastName && (
-                    <p className="text-xs text-status-at-risk mt-1">{errors.lastName}</p>
-                  )}
-                </div>
+          <CardContent className="pt-0">
+            {companyMatchLoading ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Searching companies...
               </div>
-              <div>
-                <Label htmlFor="email">Email *</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={addContactForm.email}
-                  onChange={(e) => setAddContactForm((p) => ({ ...p, email: e.target.value }))}
-                  className="mt-1"
-                  error={!!errors.email}
-                />
-                {errors.email && (
-                  <p className="text-xs text-status-at-risk mt-1">{errors.email}</p>
-                )}
-              </div>
-              <div>
-                <Label htmlFor="phone">Phone</Label>
-                <Input
-                  id="phone"
-                  value={addContactForm.phone}
-                  onChange={(e) => setAddContactForm((p) => ({ ...p, phone: e.target.value }))}
-                  className="mt-1"
-                  error={!!errors.phone}
-                />
-                {errors.phone && (
-                  <p className="text-xs text-status-at-risk mt-1">{errors.phone}</p>
-                )}
-              </div>
-              <div>
-                <Label htmlFor="jobTitle">Job Title</Label>
-                <Input
-                  id="jobTitle"
-                  value={addContactForm.jobTitle}
-                  onChange={(e) => setAddContactForm((p) => ({ ...p, jobTitle: e.target.value }))}
-                  className="mt-1"
-                />
-              </div>
-              <div>
-                <Label>Account</Label>
-                <CompanySearchAutocomplete
-                  value={addContactForm.accountSearchDisplay}
-                  onChange={(v) => {
-                    setAddContactForm((p) => ({ ...p, accountSearchDisplay: v, ...(v ? {} : { accountId: '' }) }));
-                  }}
-                  onSelect={(c) => {
-                    setAddContactForm((p) => ({
-                      ...p,
-                      accountId: c.id,
-                      accountSearchDisplay: c.name ?? c.id,
-                    }));
-                  }}
-                  placeholder="Search companies..."
-                  className="mt-1"
-                />
+            ) : companyMatchResults.length > 0 ? (
+              <ul className="space-y-2">
+                {companyMatchResults.map((c) => (
+                  <li key={c.id} className="flex items-center justify-between gap-2 py-2 border-b border-border last:border-0">
+                    <span className="text-sm truncate">{c.name ?? c.id}{c.domain ? ` (${c.domain})` : ''}</span>
+                    <Button type="button" variant="outline" size="sm" onClick={() => handleConfirmCompanyMatch(c)}>
+                      Confirm
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">No matching company in HubSpot.</p>
                 <Button
                   type="button"
-                  variant="link"
-                  className="mt-1.5 h-auto p-0 text-sm text-primary"
-                  onClick={() => router.replace('/contacts?tab=account&returnToContact=1')}
+                  variant="default"
+                  size="sm"
+                  onClick={handleCreateAccountFromImport}
+                  className="font-medium"
                 >
-                  + Create account
+                  Create account
                 </Button>
+                <p className="text-xs text-muted-foreground">Company details from the email will be pre-filled.</p>
               </div>
-              <div>
-                <Label>Relationship Status</Label>
-                <Select
-                  value={addContactForm.relationshipStatus}
-                  onValueChange={(v) => setAddContactForm((p) => ({ ...p, relationshipStatus: v }))}
-                >
-                  <SelectTrigger className="mt-1">
-                    <SelectValue placeholder="Select status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {RELATIONSHIP_OPTIONS.map((s) => (
-                      <SelectItem key={s} value={s}>
-                        <span className="flex items-center gap-2">
-                          <StatusChip status={s} size="sm" />
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex flex-wrap gap-2 pt-2">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={(e) => handleContactSubmit(e)}
-                  disabled={contactSubmitLoading}
-                >
-                  {contactSubmitLoading ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : null}
-                  Create Contact
-                </Button>
-              </div>
-            </form>
+            )}
           </CardContent>
         </Card>
-      </div>
       )}
 
       <Toast
@@ -1026,8 +1173,7 @@ function ContactTabContent({
         {toast.description && <ToastDescription>{toast.description}</ToastDescription>}
         <ToastClose />
       </Toast>
-    </div>
-  );
+    </div>  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1037,16 +1183,34 @@ function ContactTabContent({
 function AccountTabContent({
   returnToContact,
   onCreateAndGoBack,
+  prefillCompanyName,
+  prefillDomain,
+  prefillCity,
+  prefillStateRegion,
+  prefillCompanyOwner,
 }: {
   returnToContact: boolean;
   onCreateAndGoBack: (company: { id: string; name: string }) => void;
+  prefillCompanyName?: string;
+  prefillDomain?: string;
+  prefillCity?: string;
+  prefillStateRegion?: string;
+  prefillCompanyOwner?: string;
 }): React.ReactElement {
-  const [companyName, setCompanyName] = React.useState('');
-  const [domain, setDomain] = React.useState('');
-  const [companyOwner, setCompanyOwner] = React.useState('');
-  const [city, setCity] = React.useState('');
-  const [stateRegion, setStateRegion] = React.useState('');
+  const [companyName, setCompanyName] = React.useState(prefillCompanyName ?? '');
+  const [domain, setDomain] = React.useState(prefillDomain ?? '');
+  const [companyOwner, setCompanyOwner] = React.useState(prefillCompanyOwner ?? '');
+  const [city, setCity] = React.useState(prefillCity ?? '');
+  const [stateRegion, setStateRegion] = React.useState(prefillStateRegion ?? '');
   const [errors, setErrors] = React.useState<Record<string, string>>({});
+
+  React.useEffect(() => {
+    if (prefillCompanyName != null) setCompanyName(prefillCompanyName);
+    if (prefillDomain != null) setDomain(prefillDomain);
+    if (prefillCity != null) setCity(prefillCity);
+    if (prefillStateRegion != null) setStateRegion(prefillStateRegion);
+    if (prefillCompanyOwner != null) setCompanyOwner(prefillCompanyOwner);
+  }, [prefillCompanyName, prefillDomain, prefillCity, prefillStateRegion, prefillCompanyOwner]);
   const [accountSubmitLoading, setAccountSubmitLoading] = React.useState(false);
   const [toast, setToast] = React.useState<{
     open: boolean;
@@ -1232,6 +1396,22 @@ function ContactsPageContent(): React.ReactElement {
   const returnToContact = searchParams.get('returnToContact') === '1';
 
   const [addContactForm, setAddContactForm] = React.useState<AddContactFormState>(INITIAL_ADD_CONTACT_FORM);
+  const [extractedDataForCompanyPicker, setExtractedDataForCompanyPicker] = React.useState<ExtractedContact | null>(null);
+
+  const handleUseExtractedDataFromImport = React.useCallback((data: ExtractedContact) => {
+    setAddContactForm((prev) => ({
+      ...prev,
+      firstName: data.first_name || prev.firstName,
+      lastName: data.last_name || prev.lastName,
+      email: data.email || prev.email,
+      phone: data.phone || prev.phone,
+      jobTitle: data.job_title || prev.jobTitle,
+      accountSearchDisplay: data.company_name || prev.accountSearchDisplay,
+      accountId: '',
+    }));
+    setExtractedDataForCompanyPicker(data);
+    router.replace('/contacts?tab=contact', { scroll: false });
+  }, [router]);
 
   const handleCreateAndGoBack = React.useCallback(
     (company: { id: string; name: string }) => {
@@ -1256,35 +1436,64 @@ function ContactsPageContent(): React.ReactElement {
   );
 
   return (
-    <div className="space-y-6">
-      <header>
+    <div className="h-full flex flex-col overflow-hidden">
+      <header className="shrink-0">
         <h1 className="text-2xl font-bold tracking-tight">Contacts</h1>
         <p className="text-sm text-muted-foreground mt-1">
           Create and manage contacts and accounts.
         </p>
       </header>
 
-      <Tabs
-        value={activeTab}
-        onValueChange={handleTabChange}
-      >
-        <TabsList>
-          <TabsTrigger value="contact">Contact</TabsTrigger>
-          <TabsTrigger value="account">Account</TabsTrigger>
-        </TabsList>
-        <TabsContent value="contact" className="mt-4">
-          <ContactTabContent
-            addContactForm={addContactForm}
-            setAddContactForm={setAddContactForm}
-          />
-        </TabsContent>
-        <TabsContent value="account" className="mt-4">
-          <AccountTabContent
-            returnToContact={returnToContact}
-            onCreateAndGoBack={handleCreateAndGoBack}
-          />
-        </TabsContent>
-      </Tabs>
+      {/* Two columns — each scrolls independently, page itself does not scroll */}
+      <div className="flex-1 min-h-0 flex overflow-hidden gap-0 mt-6">
+
+        {/* Left column (50%): tab switcher (static) + tab content (scrolls) */}
+        <div className="flex-1 min-w-0 flex flex-col overflow-hidden border-r border-border">
+          <Tabs value={activeTab} onValueChange={handleTabChange} className="flex flex-col h-full min-h-0">
+
+            {/* Static header — tab switcher only, never scrolls */}
+            <div className="shrink-0 p-4 border-b border-border">
+              <TabsList className="w-full grid grid-cols-2">
+                <TabsTrigger value="contact">Contact</TabsTrigger>
+                <TabsTrigger value="account">Account</TabsTrigger>
+              </TabsList>
+            </div>
+
+            {/* Scrollable content */}
+            <div className="flex-1 min-h-0 flex flex-col overflow-y-auto [scrollbar-gutter:stable]">
+              <TabsContent value="contact" className="p-4 mt-0 flex-1 flex flex-col min-h-0 data-[state=inactive]:hidden">
+                <ContactTabContent
+                  addContactForm={addContactForm}
+                  setAddContactForm={setAddContactForm}
+                  extractedDataForCompanyPicker={extractedDataForCompanyPicker}
+                  onClearCompanyPicker={() => setExtractedDataForCompanyPicker(null)}
+                />
+              </TabsContent>
+              <TabsContent value="account" className="p-4 mt-0 flex-1 flex flex-col min-h-0 data-[state=inactive]:hidden">
+                <AccountTabContent
+                  returnToContact={returnToContact}
+                  onCreateAndGoBack={handleCreateAndGoBack}
+                  prefillCompanyName={searchParams.get('companyName') ?? undefined}
+                  prefillDomain={searchParams.get('domain') ?? undefined}
+                  prefillCity={searchParams.get('city') ?? undefined}
+                  prefillStateRegion={searchParams.get('stateRegion') ?? undefined}
+                  prefillCompanyOwner={searchParams.get('companyOwner') ?? undefined}
+                />
+              </TabsContent>
+            </div>
+
+          </Tabs>
+        </div>
+
+        {/* Right column (50%): contact search + import from communication; scrolls independently */}
+        <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden bg-surface">
+          <ContactSearchPanel />
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+            <ImportFromCommunicationColumn onUseExtractedData={handleUseExtractedDataFromImport} />
+          </div>
+        </div>
+
+      </div>
     </div>
   );
 }

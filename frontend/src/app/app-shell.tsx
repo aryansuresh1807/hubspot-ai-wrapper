@@ -15,6 +15,12 @@ function isAuthRoute(pathname: string): boolean {
   );
 }
 
+/** Pages that fill the viewport and scroll internally (no outer content-area scrollbar). */
+function isViewportConstrainedRoute(pathname: string): boolean {
+  return pathname === '/contacts' || pathname.startsWith('/contacts/') ||
+    pathname === '/activity' || pathname.startsWith('/activity/');
+}
+
 export interface AppShellProps {
   children: React.ReactNode;
   /** Optional override for Topbar user (defaults to useAuth().user) */
@@ -76,7 +82,10 @@ export function AppShell({
           onSignOut={onSignOut}
           onMenuClick={() => setMobileMenuOpen(true)}
         />
-        <div className="flex-1 min-h-0 overflow-y-auto p-4 md:p-6">{children}</div>
+        <div className={cn(
+          'flex-1 min-h-0 flex flex-col p-4 md:p-6',
+          isViewportConstrainedRoute(pathname ?? '') ? 'overflow-hidden' : 'overflow-y-auto'
+        )}>{children}</div>
       </main>
     </>
   );

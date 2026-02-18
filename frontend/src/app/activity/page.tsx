@@ -788,7 +788,7 @@ function ActivityPageContent(): React.ReactElement {
       <div className="flex-1 min-w-[400px] overflow-y-auto bg-surface border-r border-border">
         <div className="flex flex-col gap-6 p-4">
         {/* 1. Note Editor */}
-        <Card>
+        <Card className="border-[1.5px]">
           <CardHeader>
             <CardTitle className="text-base">
               Meeting Notes / Email Thread / Handwritten Notes
@@ -856,7 +856,7 @@ function ActivityPageContent(): React.ReactElement {
         </Card>
 
         {/* 2. Import from Communication */}
-        <Card>
+        <Card className="border-[1.5px]">
           <CardHeader>
             <CardTitle className="text-base">Import from Communication</CardTitle>
           </CardHeader>
@@ -918,7 +918,7 @@ function ActivityPageContent(): React.ReactElement {
         </Card>
 
         {/* 3. Contact & Account */}
-        <Card>
+        <Card className="border-[1.5px]">
           <CardHeader>
             <CardTitle className="text-base">Contact & Account</CardTitle>
           </CardHeader>
@@ -1058,7 +1058,7 @@ function ActivityPageContent(): React.ReactElement {
         </Card>
 
         {/* 4. Quick Actions */}
-        <Card>
+        <Card className="border-[1.5px]">
           <CardHeader>
             <CardTitle className="text-base">Quick Actions</CardTitle>
           </CardHeader>
@@ -1104,7 +1104,7 @@ function ActivityPageContent(): React.ReactElement {
       <div className="w-[48rem] shrink-0 flex flex-col overflow-y-auto p-4 min-w-0">
         <div className="w-full max-w-3xl flex flex-col gap-6">
         {/* 1. Communication summary (from client notes; stored per task in Supabase) */}
-        <Card className="border-primary/30 bg-primary/5">
+        <Card className="border-[1.5px] border-primary/30 bg-primary/5">
           <CardHeader className="space-y-0 pb-2">
             <CardTitle className="text-base flex items-center gap-2">
               <RefreshCw className="h-4 w-4 text-primary" />
@@ -1163,7 +1163,7 @@ function ActivityPageContent(): React.ReactElement {
 
         {/* 2. Error Banner - only when low confidence fields */}
         {showErrorBanner && (
-          <Card className="border-status-at-risk/50 bg-status-at-risk/10">
+          <Card className="border-[1.5px] border-status-at-risk/50 bg-status-at-risk/10">
             <CardContent className="flex gap-3 py-4">
               <AlertTriangle className="h-5 w-5 text-status-at-risk shrink-0 mt-0.5" />
               <div>
@@ -1177,7 +1177,7 @@ function ActivityPageContent(): React.ReactElement {
         )}
 
         {/* 3. Dates (Activity Date + Due Date) */}
-        <Card>
+        <Card className="border-[1.5px]">
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Dates</CardTitle>
           </CardHeader>
@@ -1262,7 +1262,7 @@ function ActivityPageContent(): React.ReactElement {
         </Card>
 
         {/* 4. Extracted Metadata */}
-        <Card>
+        <Card className="border-[1.5px]">
           <CardHeader>
             <CardTitle className="text-base">Extracted Metadata - Upcoming Task</CardTitle>
           </CardHeader>
@@ -1337,7 +1337,7 @@ function ActivityPageContent(): React.ReactElement {
         </Card>
 
         {/* 5. AI-Generated Drafts */}
-        <Card>
+        <Card className="border-[1.5px]">
           <CardHeader>
             <CardTitle className="text-base">AI-Generated Notes</CardTitle>
           </CardHeader>
@@ -1420,7 +1420,7 @@ function ActivityPageContent(): React.ReactElement {
         </Card>
 
         {/* Relationship & Opportunity */}
-        <Card>
+        <Card className="border-[1.5px]">
           <CardContent className="pt-6 space-y-4">
             <div>
               <div className="flex justify-between items-center">
