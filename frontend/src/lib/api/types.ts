@@ -4,7 +4,7 @@
  */
 
 // -----------------------------------------------------------------------------
-// Activity list query params (GET /api/v1/activities/)
+// Activity list query params (GET /api/v1/activities)
 // -----------------------------------------------------------------------------
 
 export type ActivitySortOption =

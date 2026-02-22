@@ -267,13 +267,6 @@ def _date_to_hubspot_ms(date_str: str, end_of_day: bool = False) -> int | None:
     summary="List activities",
     description="List activities with optional filters and sort. Uses cache if fresh (5 min), else syncs from HubSpot. Default date filter is today.",
 )
-@router.get(
-    "/",
-    response_model=ActivityListResponse,
-    summary="List activities (trailing slash)",
-    description="Same as GET /activities; supports clients that call /activities/.",
-    include_in_schema=False,
-)
 async def list_activities(
     user_id: str = Depends(get_current_user_id),
     date: str | None = Query(None, description="Filter by date (YYYY-MM-DD); default today"),
@@ -285,7 +278,7 @@ async def list_activities(
     supabase: SupabaseService = Depends(get_supabase_service),
     hubspot: HubSpotService = Depends(get_hubspot_service),
 ) -> ActivityListResponse:
-    """GET /api/v1/activities/ — list activities with cache and filters. Default: tasks due today."""
+    """GET /api/v1/activities — list activities with cache and filters. Default: tasks due today."""
     # Default date filter to today when no range specified (dashboard "today's tasks" view)
     effective_date = date
     if effective_date is None and date_from is None and date_to is None:
@@ -720,7 +713,7 @@ async def get_communication_summary(
 
 
 @router.post(
-    "/",
+    "",
     response_model=ActivityResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create activity",
@@ -731,7 +724,7 @@ async def create_activity(
     supabase: SupabaseService = Depends(get_supabase_service),
     hubspot: HubSpotService = Depends(get_hubspot_service),
 ) -> ActivityResponse:
-    """POST /api/v1/activities/ — create in HubSpot and cache."""
+    """POST /api/v1/activities — create in HubSpot and cache."""
     try:
         props: dict[str, Any] = {}
         if body.subject is not None:

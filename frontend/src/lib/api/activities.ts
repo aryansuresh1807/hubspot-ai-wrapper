@@ -96,7 +96,7 @@ async function fetchApi<T>(
 }
 
 /**
- * GET /api/v1/activities/
+ * GET /api/v1/activities
  * List activities with optional filters and sort.
  */
 export async function getActivities(
@@ -104,7 +104,7 @@ export async function getActivities(
 ): Promise<ActivityListResponse> {
   try {
     const qs = buildActivitiesQueryString(params);
-    return fetchApi<ActivityListResponse>(`/api/v1/activities/${qs}`);
+    return fetchApi<ActivityListResponse>(`/api/v1/activities${qs}`);
   } catch (err) {
     if (err instanceof ApiClientError) throw err;
     throw new Error(
@@ -131,14 +131,14 @@ export async function getActivity(
 }
 
 /**
- * POST /api/v1/activities/
+ * POST /api/v1/activities
  * Create a new activity.
  */
 export async function createActivity(
   data: CreateActivityData
 ): Promise<DashboardActivity> {
   try {
-    return fetchApi<DashboardActivity>('/api/v1/activities/', {
+    return fetchApi<DashboardActivity>('/api/v1/activities', {
       method: 'POST',
       body: JSON.stringify(data),
     });

@@ -3,6 +3,9 @@
  * - Local: uses NEXT_PUBLIC_API_URL (e.g. http://localhost:8000).
  * - Deployed (Vercel): uses relative URLs so requests hit same origin and Next.js
  *   rewrites /api/v1/* to the backend (set API_URL on Vercel). No CORS/build-time env issues.
+ *
+ * Path convention: Use no trailing slash for collection roots (e.g. /api/v1/contacts,
+ * /api/v1/companies, /api/v1/activities) so requests match the backend and avoid 307 redirects.
  */
 
 const isLocalhost = (): boolean => {
