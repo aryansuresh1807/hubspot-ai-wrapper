@@ -411,6 +411,11 @@ class SupabaseService:
         data: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Insert or update a single contact in hubspot_contacts_cache."""
+        logger.info(
+            "upsert_contact_cache: user_id=%s hubspot_contact_id=%s",
+            user_id,
+            hubspot_contact_id,
+        )
         try:
             now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             response = (
@@ -427,10 +432,11 @@ class SupabaseService:
                 .execute()
             )
             if response.data and len(response.data) > 0:
+                logger.info("upsert_contact_cache: success hubspot_contact_id=%s", hubspot_contact_id)
                 return response.data[0]
             return {"user_id": user_id, "hubspot_contact_id": hubspot_contact_id, "data": data}
         except Exception as e:
-            logger.error("Upsert contact cache error: %s", str(e))
+            logger.error("upsert_contact_cache: error user_id=%s hubspot_contact_id=%s: %s", user_id, hubspot_contact_id, str(e))
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to update contacts cache",

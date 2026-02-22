@@ -211,14 +211,28 @@ class HubSpotService:
         """Create a new contact. contact_data can be {'properties': {...}} or flat properties."""
         if "properties" not in contact_data:
             contact_data = {"properties": contact_data}
+        props = contact_data.get("properties") or {}
+        logger.info(
+            "HubSpot create_contact: POST /crm/v3/objects/contacts property_keys=%s",
+            list(props.keys()),
+        )
         try:
             data = self._request("POST", "/crm/v3/objects/contacts", json=contact_data)
-        except HubSpotServiceError:
+        except HubSpotServiceError as e:
+            logger.warning(
+                "HubSpot create_contact: API error status_code=%s message=%s",
+                e.status_code,
+                e.message,
+            )
             raise
         except Exception as e:
+            logger.exception("HubSpot create_contact: request failed: %s", e)
             raise HubSpotServiceError(f"Failed to create contact: {e!s}") from e
         if not isinstance(data, dict):
+            logger.error("HubSpot create_contact: unexpected response type %s", type(data).__name__)
             raise HubSpotServiceError("Unexpected response when creating contact")
+        contact_id = data.get("id")
+        logger.info("HubSpot create_contact: success id=%s", contact_id)
         return data
 
     def update_contact(

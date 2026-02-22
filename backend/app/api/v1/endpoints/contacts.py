@@ -400,22 +400,43 @@ async def create_contact(
     hubspot: HubSpotService = Depends(get_hubspot_service),
 ) -> ContactDetailResponse:
     """POST /api/v1/contacts/ — create in HubSpot, optionally associate with company, and cache."""
+    logger.info(
+        "create_contact: request started user_id=%s email=%s first_name=%s last_name=%s company_id=%s",
+        user_id,
+        body.email,
+        body.first_name,
+        body.last_name,
+        body.company_id or "",
+    )
     try:
         props = _contact_create_to_hubspot_properties(body)
         payload = {"properties": props}
+        logger.info("create_contact: calling HubSpot create_contact with property keys: %s", list(props.keys()))
         contact_data = hubspot.create_contact(payload)
         cid = contact_data.get("id")
         if not cid:
+            logger.error("create_contact: HubSpot response missing contact id; response keys=%s", list(contact_data.keys()) if isinstance(contact_data, dict) else type(contact_data).__name__)
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="HubSpot did not return contact id")
         cid_str = str(cid)
+        logger.info("create_contact: HubSpot contact created id=%s", cid_str)
         if body.company_id and body.company_id.strip():
             try:
+                logger.info("create_contact: associating contact %s with company %s", cid_str, body.company_id.strip())
                 hubspot.associate_contact_with_company(cid_str, body.company_id.strip())
+                logger.info("create_contact: company association succeeded")
             except HubSpotServiceError as ae:
-                logger.warning("Contact created but company association failed: %s", ae.message)
+                logger.warning("create_contact: contact created but company association failed: %s (status_code=%s)", ae.message, ae.status_code)
+        logger.info("create_contact: upserting contact cache user_id=%s contact_id=%s", user_id, cid_str)
         await supabase.upsert_contact_cache(user_id, cid_str, contact_data)
+        logger.info("create_contact: success returning contact id=%s", cid_str)
         return _hubspot_contact_to_contact(contact_data)
     except HubSpotServiceError as e:
+        logger.warning(
+            "create_contact: HubSpotServiceError status_code=%s message=%s detail=%s",
+            e.status_code,
+            e.message,
+            e.detail,
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=e.message or "HubSpot error",
@@ -423,7 +444,7 @@ async def create_contact(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Create contact error: %s", e)
+        logger.exception("create_contact: unexpected error: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create contact",
