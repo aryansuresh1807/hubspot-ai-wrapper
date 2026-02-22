@@ -98,7 +98,7 @@ def _contact_update_to_hubspot_properties(body: ContactUpdate) -> dict[str, Any]
 
 
 @router.get(
-    "/",
+    "",
     response_model=ContactListResponse,
     summary="List contacts",
     description="Fetch contacts from HubSpot, cache in hubspot_contacts_cache, return list.",
@@ -388,7 +388,7 @@ async def get_contact(
 
 
 @router.post(
-    "/",
+    "",
     response_model=ContactDetailResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create contact",

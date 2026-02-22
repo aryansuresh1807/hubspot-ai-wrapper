@@ -79,11 +79,11 @@ export async function searchCompanies(query: string): Promise<CompanySearchResul
 }
 
 /**
- * POST /api/v1/companies/
+ * POST /api/v1/companies
  * Create a company in HubSpot.
  */
 export async function createCompany(data: CompanyCreate): Promise<CompanyDetailResponse> {
-  return fetchApi<CompanyDetailResponse>('/api/v1/companies/', {
+  return fetchApi<CompanyDetailResponse>('/api/v1/companies', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),

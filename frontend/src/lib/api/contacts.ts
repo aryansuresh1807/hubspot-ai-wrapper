@@ -47,14 +47,14 @@ async function fetchApi<T>(
 }
 
 /**
- * GET /api/v1/contacts/
+ * GET /api/v1/contacts
  * List contacts with optional search filter.
  */
 export async function getContacts(search?: string): Promise<ContactListResponse> {
   try {
     const params: Record<string, string> = {};
     if (search != null && search.trim()) params.search = search.trim();
-    const path = '/api/v1/contacts/' + (Object.keys(params).length ? '?' + new URLSearchParams(params).toString() : '');
+    const path = '/api/v1/contacts' + (Object.keys(params).length ? '?' + new URLSearchParams(params).toString() : '');
     return fetchApi<ContactListResponse>(path);
   } catch (err) {
     if (err instanceof ApiClientError) throw err;
@@ -80,12 +80,12 @@ export async function getContact(contactId: string): Promise<Contact> {
 }
 
 /**
- * POST /api/v1/contacts/
+ * POST /api/v1/contacts
  * Create a new contact.
  */
 export async function createContact(data: ContactCreate): Promise<Contact> {
   try {
-    return fetchApi<Contact>('/api/v1/contacts/', {
+    return fetchApi<Contact>('/api/v1/contacts', {
       method: 'POST',
       body: JSON.stringify(data),
     });

@@ -88,7 +88,7 @@ async def search_companies(
 
 
 @router.post(
-    "/",
+    "",
     response_model=CompanyDetailResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create company",
