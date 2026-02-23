@@ -122,7 +122,7 @@ async def gmail_search(
     try:
         list_kwargs: Dict[str, Any] = {
             "userId": "me",
-            "maxResults": 20,
+            "maxResults": 9,
         }
         if q and q.strip():
             list_kwargs["q"] = q.strip()
