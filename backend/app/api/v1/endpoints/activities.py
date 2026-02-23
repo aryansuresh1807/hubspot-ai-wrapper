@@ -195,6 +195,26 @@ def _apply_sort(activities: list[dict[str, Any]], sort: ActivitySortOption) -> l
     return sorted(activities, key=sort_key)
 
 
+def _hubspot_companies_to_activity_companies(
+    companies: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Convert HubSpot company batch results to activity dict 'companies' format."""
+    out: list[dict[str, Any]] = []
+    for co in companies:
+        cid = co.get("id")
+        if cid is None:
+            continue
+        sid = str(cid)
+        props = co.get("properties") or {}
+        out.append({
+            "id": sid,
+            "name": props.get("name"),
+            "domain": props.get("domain"),
+            "hubspot_id": sid,
+        })
+    return out
+
+
 def _contact_dict_to_info(
     c: dict[str, Any],
     company_name: str | None = None,
@@ -512,6 +532,13 @@ async def list_activities(
                         cid: contact_id_to_company_name.get(cid, "")
                         for cid in (a.get("contact_ids") or [])
                     }
+                    # Use contact's company for company_ids when task has none (so dashboard passes company_id and Activity page account is always populated)
+                    if not (a.get("company_ids")):
+                        cids = a.get("contact_ids") or []
+                        if cids:
+                            co_id = contact_to_company.get(cids[0])
+                            if co_id:
+                                a["company_ids"] = [co_id]
             except HubSpotServiceError:
                 pass  # keep contacts empty if batch fails
 
@@ -648,6 +675,7 @@ async def get_activity(
                 data = row.get("data") or {}
                 a = _hubspot_task_to_activity(data)
                 contact_ids = a.get("contact_ids") or []
+                company_ids_from_task = a.get("company_ids") or []
                 if contact_ids:
                     try:
                         contact_list = hubspot.get_contacts_batch(contact_ids)
@@ -662,10 +690,17 @@ async def get_activity(
                                     cid: company_name_by_id.get(contact_to_company.get(cid, ""), "") or ""
                                     for cid in contact_ids
                                 }
+                                a["companies"] = _hubspot_companies_to_activity_companies(companies)
                             else:
                                 a["contact_company_names"] = {cid: "" for cid in contact_ids}
                         except HubSpotServiceError:
                             a["contact_company_names"] = {cid: "" for cid in contact_ids}
+                    except HubSpotServiceError:
+                        pass
+                if not a.get("companies") and company_ids_from_task:
+                    try:
+                        companies = hubspot.get_companies_batch(company_ids_from_task, properties=["name"])
+                        a["companies"] = _hubspot_companies_to_activity_companies(companies)
                     except HubSpotServiceError:
                         pass
                 return _activity_dict_to_response(a)
@@ -674,6 +709,7 @@ async def get_activity(
         await supabase.upsert_task_cache(user_id, activity_id, task)
         a = _hubspot_task_to_activity(task)
         contact_ids = a.get("contact_ids") or []
+        company_ids_from_task = a.get("company_ids") or []
         if contact_ids:
             try:
                 contact_list = hubspot.get_contacts_batch(contact_ids)
@@ -688,10 +724,17 @@ async def get_activity(
                             cid: company_name_by_id.get(contact_to_company.get(cid, ""), "") or ""
                             for cid in contact_ids
                         }
+                        a["companies"] = _hubspot_companies_to_activity_companies(companies)
                     else:
                         a["contact_company_names"] = {cid: "" for cid in contact_ids}
                 except HubSpotServiceError:
                     a["contact_company_names"] = {cid: "" for cid in contact_ids}
+            except HubSpotServiceError:
+                pass
+        if not a.get("companies") and company_ids_from_task:
+            try:
+                companies = hubspot.get_companies_batch(company_ids_from_task, properties=["name"])
+                a["companies"] = _hubspot_companies_to_activity_companies(companies)
             except HubSpotServiceError:
                 pass
         return _activity_dict_to_response(a)

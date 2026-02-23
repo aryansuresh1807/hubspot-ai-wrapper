@@ -833,16 +833,41 @@ function ActivityPageContent(): React.ReactElement {
   const urlContactName = searchParams.get('contact_name');
   const urlAccountName = searchParams.get('account_name');
 
+  // Initial contact/account from URL so they appear immediately when opening from Dashboard (no wait for getActivity or communication summary)
+  const initialContactName = urlContactName ? decodeURIComponent(urlContactName) : '';
+  const initialAccountName = urlAccountName ? decodeURIComponent(urlAccountName) : '';
+
   const [noteContent, setNoteContent] = React.useState('');
   const [processingStep, setProcessingStep] = React.useState<ProcessingStep>('idle');
-  const [contactSearch, setContactSearch] = React.useState('');
-  const [accountSearch, setAccountSearch] = React.useState('');
+  const [contactSearch, setContactSearch] = React.useState(initialContactName);
+  const [accountSearch, setAccountSearch] = React.useState(initialAccountName);
   const [contactFocused, setContactFocused] = React.useState(false);
   const [accountFocused, setAccountFocused] = React.useState(false);
   const contactRef = React.useRef<HTMLDivElement>(null);
   const accountRef = React.useRef<HTMLDivElement>(null);
-  const [selectedContact, setSelectedContact] = React.useState<Contact | null>(null);
-  const [selectedAccount, setSelectedAccount] = React.useState<CompanySearchResult | null>(null);
+  const [selectedContact, setSelectedContact] = React.useState<Contact | null>(() =>
+    urlContactId
+      ? ({
+          id: urlContactId,
+          first_name: initialContactName || undefined,
+          last_name: undefined,
+          email: undefined,
+          company_id: urlCompanyId ?? undefined,
+          company_name: initialAccountName || undefined,
+        } as Contact)
+      : null
+  );
+  const [selectedAccount, setSelectedAccount] = React.useState<CompanySearchResult | null>(() =>
+    urlCompanyId && (urlAccountName || urlCompanyId)
+      ? {
+          id: urlCompanyId,
+          name: initialAccountName || undefined,
+          domain: undefined,
+          city: undefined,
+          state: undefined,
+        }
+      : null
+  );
   const [contactOptions, setContactOptions] = React.useState<Contact[]>([]);
   const [accountOptions, setAccountOptions] = React.useState<CompanySearchResult[]>([]);
   const [contactsByCompany, setContactsByCompany] = React.useState<Contact[]>([]);
