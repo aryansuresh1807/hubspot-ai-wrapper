@@ -19,6 +19,7 @@ import {
   RefreshCw,
   CheckCircle2,
   Pencil,
+  X,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { Calendar } from '@/components/ui/calendar';
@@ -1618,20 +1619,32 @@ function ActivityPageContent(): React.ReactElement {
               disabled={
                 activityLoading ||
                 (activityId
-                  ? false
+                  ? !(
+                      markCompleteSelected ||
+                      (noteContent.trim() &&
+                        subject.trim() &&
+                        (selectedContact?.id ?? activity?.contacts?.[0]?.id) &&
+                        (selectedAccount?.id ?? activity?.companies?.[0]?.id) &&
+                        !!dueDate)
+                    )
                   : !(
                       noteContent.trim() &&
                       subject.trim() &&
                       selectedContact &&
-                      selectedAccount
+                      selectedAccount &&
+                      !!dueDate
                     ))
               }
             >
               {activityId ? 'Submit Activity' : 'Create Activity'}
             </Button>
-            {!activityId && !activityLoading && !(noteContent.trim() && subject.trim() && selectedContact && selectedAccount) ? (
+            {!activityId && !activityLoading && !(noteContent.trim() && subject.trim() && selectedContact && selectedAccount && dueDate) ? (
               <p className="text-xs text-muted-foreground mt-2">
-                Fill in meeting notes, subject, contact, and account to create a new activity.
+                Fill in meeting notes, subject, contact, account, and due date to create a new activity.
+              </p>
+            ) : activityId && !markCompleteSelected && !(noteContent.trim() && subject.trim() && (selectedContact?.id ?? activity?.contacts?.[0]?.id) && (selectedAccount?.id ?? activity?.companies?.[0]?.id) && dueDate) ? (
+              <p className="text-xs text-muted-foreground mt-2">
+                Fill in meeting notes, subject, contact, account, and due date to update the activity.
               </p>
             ) : null}
           </CardContent>
@@ -1731,45 +1744,73 @@ function ActivityPageContent(): React.ReactElement {
             <div className="space-y-1">
               <Label>Activity Date</Label>
               <p className="text-xs text-muted-foreground">Date the task was performed (used for notes)</p>
-              <Popover>
-                <PopoverTrigger asChild>
+              <div className="flex gap-2">
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className="flex-1 justify-start text-left font-normal min-w-0"
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4 shrink-0" />
+                      {activityDate ? format(new Date(activityDate + 'T00:00:00'), 'MMM d, yyyy') : 'Pick a date'}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={activityDate ? new Date(activityDate + 'T00:00:00') : undefined}
+                      onSelect={(d) => setActivityDate(d ? format(d, 'yyyy-MM-dd') : '')}
+                    />
+                  </PopoverContent>
+                </Popover>
+                {activityDate ? (
                   <Button
+                    type="button"
                     variant="outline"
-                    className="w-full justify-start text-left font-normal"
+                    size="icon"
+                    className="shrink-0"
+                    onClick={() => setActivityDate('')}
+                    title="Clear activity date"
                   >
-                    <CalendarIcon className="mr-2 h-4 w-4 shrink-0" />
-                    {activityDate ? format(new Date(activityDate + 'T00:00:00'), 'MMM d, yyyy') : 'Pick a date'}
+                    <X className="h-4 w-4" />
                   </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={activityDate ? new Date(activityDate + 'T00:00:00') : undefined}
-                    onSelect={(d) => setActivityDate(d ? format(d, 'yyyy-MM-dd') : '')}
-                  />
-                </PopoverContent>
-              </Popover>
+                ) : null}
+              </div>
             </div>
             <div className="space-y-1">
               <Label>Due Date</Label>
-              <Popover>
-                <PopoverTrigger asChild>
+              <div className="flex gap-2">
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className="flex-1 justify-start text-left font-normal min-w-0"
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4 shrink-0" />
+                      {dueDate ? format(new Date(dueDate + 'T00:00:00'), 'MMM d, yyyy') : 'Pick a date'}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={dueDate ? new Date(dueDate + 'T00:00:00') : undefined}
+                      onSelect={(d) => setDueDate(d ? format(d, 'yyyy-MM-dd') : '')}
+                    />
+                  </PopoverContent>
+                </Popover>
+                {dueDate ? (
                   <Button
+                    type="button"
                     variant="outline"
-                    className="w-full justify-start text-left font-normal"
+                    size="icon"
+                    className="shrink-0"
+                    onClick={() => setDueDate('')}
+                    title="Clear due date"
                   >
-                    <CalendarIcon className="mr-2 h-4 w-4 shrink-0" />
-                    {dueDate ? format(new Date(dueDate + 'T00:00:00'), 'MMM d, yyyy') : 'Pick a date'}
+                    <X className="h-4 w-4" />
                   </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={dueDate ? new Date(dueDate + 'T00:00:00') : undefined}
-                    onSelect={(d) => setDueDate(d ? format(d, 'yyyy-MM-dd') : '')}
-                  />
-                </PopoverContent>
-              </Popover>
+                ) : null}
+              </div>
             </div>
             {recognisedDate.date && (
               <div className="flex flex-wrap items-center gap-2">
@@ -1957,9 +1998,19 @@ function ActivityPageContent(): React.ReactElement {
             <DialogTitle>{activityId ? 'Confirm Submission' : 'Create Activity'}</DialogTitle>
           </DialogHeader>
           {activityId && markCompleteSelected ? (
-            <p className="text-sm text-muted-foreground">
-              This will mark the activity as complete in HubSpot.
-            </p>
+            <>
+              {dueDate ? (
+                <p className="text-sm text-status-at-risk">
+                  The activity can&apos;t be marked as complete if a due date is present. Please remove the due date and try again.
+                </p>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  {noteContent.trim() && subject.trim() && (selectedContact?.id ?? activity?.contacts?.[0]?.id) && (selectedAccount?.id ?? activity?.companies?.[0]?.id)
+                    ? 'This will update the task in HubSpot with your meeting notes, subject, contact, and account, then mark it as complete.'
+                    : 'This will mark the activity as complete in HubSpot.'}
+                </p>
+              )}
+            </>
           ) : (
             <p className="text-sm text-muted-foreground">
               {activityId
@@ -1972,10 +2023,10 @@ function ActivityPageContent(): React.ReactElement {
                 const effectiveCompanyId = activityId
                   ? selectedAccount?.id ?? activity?.companies?.[0]?.id
                   : selectedAccount?.id;
-                const hasRequired = noteContent.trim() && subject.trim() && effectiveContactId && effectiveCompanyId;
+                const hasRequired = noteContent.trim() && subject.trim() && effectiveContactId && effectiveCompanyId && dueDate;
                 return !hasRequired ? (
                   <span className="block mt-2 text-status-at-risk">
-                    Please fill in meeting notes, subject, contact, and account before submitting.
+                    Please fill in meeting notes, subject, contact, account, and due date before submitting.
                   </span>
                 ) : null;
               })()}
@@ -1993,19 +2044,42 @@ function ActivityPageContent(): React.ReactElement {
                 const effectiveCompanyId = activityId
                   ? selectedAccount?.id ?? activity?.companies?.[0]?.id
                   : selectedAccount?.id;
-                if (!noteContent.trim() || !subject.trim() || !effectiveContactId || !effectiveCompanyId) return;
+                const hasAllRequiredFields = !!(
+                  noteContent.trim() &&
+                  subject.trim() &&
+                  effectiveContactId &&
+                  effectiveCompanyId
+                );
                 if (activityId && markCompleteSelected) {
-                    setIsSubmitting(true);
-                    try {
-                    await submitActivity(activityId, { mark_complete: true, priority: urgency });
+                  if (dueDate) return; // Blocked by dialog message; button is disabled
+                  setIsSubmitting(true);
+                  try {
+                    if (hasAllRequiredFields) {
+                      await submitActivity(activityId, {
+                        mark_complete: true,
+                        meeting_notes: noteContent.trim(),
+                        activity_date: activityDate || undefined,
+                        subject: subject.trim(),
+                        contact_id: effectiveContactId,
+                        company_id: effectiveCompanyId,
+                        priority: urgency,
+                      });
+                    } else {
+                      await submitActivity(activityId, {
+                        mark_complete: true,
+                        priority: urgency,
+                      });
+                    }
                     clearActivityDraftFromStorage(activityId);
                     setSubmitConfirmOpen(false);
                     setMarkCompleteSelected(false);
+                    getCommunicationSummary(activityId).then(setCommSummary).catch(() => {});
                   } finally {
                     setIsSubmitting(false);
                   }
                   return;
                 }
+                if (!hasAllRequiredFields || !dueDate) return;
                 setIsSubmitting(true);
                 try {
                   if (activityId) {
@@ -2042,16 +2116,17 @@ function ActivityPageContent(): React.ReactElement {
               }}
               disabled={
                 isSubmitting ||
-                (activityId && markCompleteSelected
-                  ? false
-                  : !(
-                      noteContent.trim() &&
-                      subject.trim() &&
-                      (activityId
-                        ? (selectedContact?.id ?? activity?.contacts?.[0]?.id) &&
-                          (selectedAccount?.id ?? activity?.companies?.[0]?.id)
-                        : selectedContact?.id && selectedAccount?.id)
-                    ))
+                (!!activityId && markCompleteSelected && !!dueDate) ||
+                (!(activityId && markCompleteSelected) &&
+                  !(
+                    noteContent.trim() &&
+                    subject.trim() &&
+                    (activityId
+                      ? (selectedContact?.id ?? activity?.contacts?.[0]?.id) &&
+                        (selectedAccount?.id ?? activity?.companies?.[0]?.id)
+                      : selectedContact?.id && selectedAccount?.id) &&
+                    dueDate
+                  ))
               }
               className="gap-2"
             >

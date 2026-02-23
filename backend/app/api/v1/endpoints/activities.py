@@ -1194,6 +1194,11 @@ async def create_and_submit_activity(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Account is required.",
             )
+        if not body.due_date or not body.due_date.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Due date is required when creating an activity.",
+            )
         if body.contact_id and body.company_id:
             company_ids = hubspot.get_contact_company_ids(body.contact_id)
             if company_ids and body.company_id not in company_ids:
@@ -1276,7 +1281,7 @@ async def create_and_submit_activity(
     "/{activity_id}/submit",
     response_model=MessageResponse,
     summary="Submit activity",
-    description="Mark complete only, or update task with notes, subject, contact, and account (due date optional; LLM processing not required).",
+    description="Mark complete only, or update task with notes, subject, contact, account, and due date (due date required unless marking complete).",
 )
 async def submit_activity(
     activity_id: str,
@@ -1288,6 +1293,80 @@ async def submit_activity(
     """POST /api/v1/activities/{activity_id}/submit — mark complete or update task. Full update requires meeting_notes, subject, contact_id, company_id only."""
     try:
         if body.mark_complete:
+            if body.due_date and body.due_date.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot mark activity as complete when a due date is set. Remove the due date.",
+                )
+            has_full_update = (
+                body.meeting_notes and body.meeting_notes.strip()
+                and body.subject and body.subject.strip()
+                and body.contact_id and body.contact_id.strip()
+                and body.company_id and body.company_id.strip()
+            )
+            if has_full_update:
+                # Contact/company consistency
+                company_ids = hubspot.get_contact_company_ids(body.contact_id)
+                if company_ids and body.company_id not in company_ids:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Selected contact is not associated with the selected account.",
+                    )
+                existing_body = ""
+                try:
+                    task = hubspot.get_task(activity_id)
+                    props = task.get("properties") or {}
+                    existing_body = (props.get(HS_BODY) or "").strip()
+                except HubSpotServiceError as e:
+                    if e.status_code == 404:
+                        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Activity not found")
+                    raise
+                if body.activity_date and body.activity_date.strip():
+                    try:
+                        activity_dt = datetime.strptime(body.activity_date.strip()[:10], "%Y-%m-%d").replace(
+                            tzinfo=timezone.utc
+                        )
+                    except ValueError:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Activity date must be YYYY-MM-DD.",
+                        )
+                else:
+                    activity_dt = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+                date_prefix = activity_dt.strftime("%m/%d/%y")
+                new_note_line = f"{date_prefix} - {body.meeting_notes.strip()}"
+                normalized_existing = _normalize_notes_body(existing_body) if existing_body else ""
+                new_body = new_note_line + ("\n\n" + normalized_existing if normalized_existing else "")
+                ts_ms = int(activity_dt.timestamp() * 1000)
+                payload = {
+                    "properties": {
+                        HS_SUBJECT: body.subject.strip(),
+                        HS_BODY: new_body,
+                        HS_TIMESTAMP: ts_ms,
+                        HS_STATUS: "COMPLETED",
+                    },
+                }
+                hs_priority = _hubspot_priority(body.priority)
+                if hs_priority is not None:
+                    payload["properties"][HS_PRIORITY] = hs_priority
+                task = hubspot.update_task(activity_id, payload)
+                await supabase.upsert_task_cache(user_id, activity_id, task)
+                if body.contact_id:
+                    try:
+                        hubspot.associate_task_with_contact(activity_id, body.contact_id)
+                    except HubSpotServiceError as ae:
+                        logger.warning("Task contact association failed: %s", ae.message)
+                if body.company_id:
+                    try:
+                        hubspot.associate_task_with_company(activity_id, body.company_id)
+                    except HubSpotServiceError as ae:
+                        logger.warning("Task company association failed: %s", ae.message)
+                try:
+                    task_with_assoc = hubspot.get_task(activity_id, associations=["contacts", "companies"])
+                    await supabase.upsert_task_cache(user_id, activity_id, task_with_assoc)
+                except HubSpotServiceError as ae:
+                    logger.warning("Re-fetch task with associations failed: %s", ae.message)
+                return MessageResponse(message="Activity updated and marked complete")
             payload = {"properties": {HS_STATUS: "COMPLETED"}}
             hs_priority = _hubspot_priority(body.priority)
             if hs_priority is not None:
@@ -1316,6 +1395,11 @@ async def submit_activity(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Account is required.",
+            )
+        if not body.due_date or not body.due_date.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Due date is required when updating an activity (unless marking as complete).",
             )
 
         # Contact/company consistency: contact must belong to company
