@@ -19,7 +19,6 @@ import {
   RefreshCw,
   CheckCircle2,
   Pencil,
-  ChevronDown,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { Calendar } from '@/components/ui/calendar';
@@ -50,8 +49,6 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/shared/skeleton';
-import { StatusChip } from '@/components/crm/StatusChip';
-import { OpportunityIndicator } from '@/components/crm/OpportunityIndicator';
 import { cn } from '@/lib/utils';
 import {
   getActivity,
@@ -132,6 +129,77 @@ interface RecommendedTouchDate {
   label: string;
   date: string;
   rationale: string;
+}
+
+// ---------------------------------------------------------------------------
+// Activity draft persistence (localStorage)
+// ---------------------------------------------------------------------------
+
+const ACTIVITY_DRAFT_KEY_NEW = 'activity-draft-new';
+
+function getActivityDraftStorageKey(activityId: string | null): string {
+  return activityId ? `activity-draft-${activityId}` : ACTIVITY_DRAFT_KEY_NEW;
+}
+
+/** Serializable shape for persisted activity draft (minimal contact/account). */
+interface ActivityDraftStored {
+  version: number;
+  noteContent: string;
+  previousNotesForSubmit: string;
+  processingStep: ProcessingStep;
+  contactSearch: string;
+  accountSearch: string;
+  selectedContact: { id: string; first_name?: string; last_name?: string; email?: string; company_id?: string; company_name?: string } | null;
+  selectedAccount: { id: string; name?: string; domain?: string; city?: string; state?: string } | null;
+  subject: string;
+  activityDate: string;
+  dueDate: string;
+  activityType: string;
+  activityOutcome: string;
+  recognisedDate: { date: string | null; label: string | null; confidence: number };
+  recommendedTouch: { date: string; label: string; rationale: string } | null;
+  urgency: UrgencyLevel;
+  nextSteps: string;
+  questionsRaised: string;
+  subjectConfidence: number;
+  nextStepsConfidence: number;
+  questionsConfidence: number;
+  selectedDraftTone: DraftTone;
+  drafts: Record<string, { text: string; confidence: number }>;
+  summaryDraft: string;
+}
+
+const DRAFT_VERSION = 1;
+
+function saveActivityDraftToStorage(
+  key: string,
+  state: ActivityDraftStored
+): void {
+  try {
+    localStorage.setItem(key, JSON.stringify({ ...state, version: DRAFT_VERSION }));
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
+function loadActivityDraftFromStorage(key: string): ActivityDraftStored | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const data = JSON.parse(raw) as Record<string, unknown>;
+    if ((data.version as number) !== DRAFT_VERSION) return null;
+    return data as unknown as ActivityDraftStored;
+  } catch {
+    return null;
+  }
+}
+
+function clearActivityDraftFromStorage(activityId: string | null): void {
+  try {
+    localStorage.removeItem(getActivityDraftStorageKey(activityId));
+  } catch {
+    // ignore
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -810,9 +878,44 @@ function ActivityPageContent(): React.ReactElement {
   const [commSummaryError, setCommSummaryError] = React.useState<string | null>(null);
   const [processConfirmOpen, setProcessConfirmOpen] = React.useState(false);
   const draftSentForProcessingRef = React.useRef<string>('');
+  const restoredFromDraftRef = React.useRef(false);
 
-  // Pre-fill contact and account from URL (dashboard Open passes these)
+  // Restore draft from localStorage on mount (overridden when opening a task from dashboard with no draft, or on submit)
+  React.useLayoutEffect(() => {
+    restoredFromDraftRef.current = false;
+    const key = getActivityDraftStorageKey(activityId);
+    const stored = loadActivityDraftFromStorage(key);
+    if (!stored) return;
+    restoredFromDraftRef.current = true;
+    setNoteContent(stored.noteContent ?? '');
+    setPreviousNotesForSubmit(stored.previousNotesForSubmit ?? '');
+    const step = stored.processingStep;
+    setProcessingStep(step === 'sent' || step === 'extracting' ? 'idle' : step);
+    setContactSearch(stored.contactSearch ?? '');
+    setAccountSearch(stored.accountSearch ?? '');
+    setSelectedContact(stored.selectedContact as Contact | null);
+    setSelectedAccount(stored.selectedAccount as CompanySearchResult | null);
+    setSubject(stored.subject ?? '');
+    setActivityDate(stored.activityDate ?? format(new Date(), 'yyyy-MM-dd'));
+    setDueDate(stored.dueDate ?? '');
+    setActivityType(stored.activityType ?? '');
+    setActivityOutcome(stored.activityOutcome ?? '');
+    setRecognisedDate(stored.recognisedDate ?? { date: null, label: null, confidence: 0 });
+    setRecommendedTouch(stored.recommendedTouch ?? null);
+    setUrgency(stored.urgency ?? 'medium');
+    setNextSteps(stored.nextSteps ?? '');
+    setQuestionsRaised(stored.questionsRaised ?? '');
+    setSubjectConfidence(stored.subjectConfidence ?? 0);
+    setNextStepsConfidence(stored.nextStepsConfidence ?? 0);
+    setQuestionsConfidence(stored.questionsConfidence ?? 0);
+    setSelectedDraftTone(stored.selectedDraftTone ?? 'original');
+    setDrafts(stored.drafts ?? MOCK_DRAFTS);
+    setSummaryDraft(stored.summaryDraft ?? '');
+  }, [activityId]);
+
+  // Pre-fill contact and account from URL (dashboard Open passes these); skip if we restored from draft
   React.useEffect(() => {
+    if (restoredFromDraftRef.current) return;
     if (urlContactName || urlContactId) {
       setContactSearch(decodeURIComponent(urlContactName ?? ''));
       if (urlContactId) {
@@ -840,7 +943,7 @@ function ActivityPageContent(): React.ReactElement {
     }
   }, [urlContactId, urlCompanyId, urlContactName, urlAccountName]);
 
-  // Load activity when opening from dashboard (id in URL); merges with URL pre-fill
+  // Load activity when opening from dashboard (id in URL); if we restored from draft, only set activity + previousNotes
   React.useEffect(() => {
     if (!activityId) {
       setActivityLoading(false);
@@ -854,7 +957,10 @@ function ActivityPageContent(): React.ReactElement {
         setActivity(a);
         const bodyTrimmed = (a.body ?? '').trim();
         setPreviousNotesForSubmit(bodyTrimmed);
-        // Leave noteContent empty: meeting notes field is for NEW notes the user will add, not existing history
+        if (restoredFromDraftRef.current) {
+          setActivityLoading(false);
+          return;
+        }
         if (a.subject) setSubject(a.subject);
         const contact = a.contacts?.[0];
         const company = a.companies?.[0];
@@ -926,6 +1032,94 @@ function ActivityPageContent(): React.ReactElement {
   }, [subjectConfidence]);
 
   const showErrorBanner = lowConfidenceFields.length > 0 && processingStep === 'ready';
+
+  const DRAFT_SAVE_DEBOUNCE_MS = 600;
+  const latestDraftRef = React.useRef<ActivityDraftStored | null>(null);
+
+  // Persist draft to localStorage (debounced); flush on unmount. Skip first run after restore so we don't overwrite with initial empty state.
+  React.useEffect(() => {
+    if (restoredFromDraftRef.current) {
+      restoredFromDraftRef.current = false;
+      return;
+    }
+    const key = getActivityDraftStorageKey(activityId);
+    const payload: ActivityDraftStored = {
+      version: DRAFT_VERSION,
+      noteContent,
+      previousNotesForSubmit,
+      processingStep,
+      contactSearch,
+      accountSearch,
+      selectedContact: selectedContact
+        ? {
+            id: selectedContact.id,
+            first_name: selectedContact.first_name,
+            last_name: selectedContact.last_name,
+            email: selectedContact.email,
+            company_id: selectedContact.company_id,
+            company_name: selectedContact.company_name,
+          }
+        : null,
+      selectedAccount: selectedAccount
+        ? {
+            id: selectedAccount.id,
+            name: selectedAccount.name,
+            domain: selectedAccount.domain,
+            city: selectedAccount.city,
+            state: selectedAccount.state,
+          }
+        : null,
+      subject,
+      activityDate,
+      dueDate,
+      activityType,
+      activityOutcome,
+      recognisedDate,
+      recommendedTouch,
+      urgency,
+      nextSteps,
+      questionsRaised,
+      subjectConfidence,
+      nextStepsConfidence,
+      questionsConfidence,
+      selectedDraftTone,
+      drafts,
+      summaryDraft,
+    };
+    latestDraftRef.current = payload;
+    const t = setTimeout(() => {
+      saveActivityDraftToStorage(key, payload);
+    }, DRAFT_SAVE_DEBOUNCE_MS);
+    return () => {
+      clearTimeout(t);
+      if (latestDraftRef.current) saveActivityDraftToStorage(key, latestDraftRef.current);
+    };
+  }, [
+    activityId,
+    noteContent,
+    previousNotesForSubmit,
+    processingStep,
+    contactSearch,
+    accountSearch,
+    selectedContact,
+    selectedAccount,
+    subject,
+    activityDate,
+    dueDate,
+    activityType,
+    activityOutcome,
+    recognisedDate,
+    recommendedTouch,
+    urgency,
+    nextSteps,
+    questionsRaised,
+    subjectConfidence,
+    nextStepsConfidence,
+    questionsConfidence,
+    selectedDraftTone,
+    drafts,
+    summaryDraft,
+  ]);
 
   React.useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -1202,7 +1396,6 @@ function ActivityPageContent(): React.ReactElement {
                 )}
                 Send for Processing
               </Button>
-              <Button variant="secondary">Save Draft</Button>
             </div>
             <Dialog open={processConfirmOpen} onOpenChange={(open) => !open && setProcessConfirmOpen(false)}>
               <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto" showClose={true}>
@@ -1721,39 +1914,6 @@ function ActivityPageContent(): React.ReactElement {
             )}
           </CardContent>
         </Card>
-
-        {/* Relationship & Opportunity */}
-        <Card className="border-[1.5px]">
-          <CardContent className="pt-6 space-y-4">
-            <div>
-              <div className="flex justify-between items-center">
-                <Label className="text-sm text-muted-foreground">
-                  Relationship Status
-                </Label>
-                <Button variant="ghost" size="sm" className="gap-1">
-                  <ChevronDown className="h-4 w-4" />
-                  Adjust
-                </Button>
-              </div>
-              <div className="mt-2">
-                <StatusChip status="Active" />
-              </div>
-            </div>
-            <div>
-              <div className="flex justify-between items-center">
-                <Label className="text-sm text-muted-foreground">
-                  Opportunity Probability
-                </Label>
-                <Button variant="outline" size="sm">
-                  Create Opportunity
-                </Button>
-              </div>
-              <div className="mt-2">
-                <OpportunityIndicator percentage={75} />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
         </div>
       </div>
 
@@ -1802,9 +1962,10 @@ function ActivityPageContent(): React.ReactElement {
                   : selectedAccount?.id;
                 if (!noteContent.trim() || !subject.trim() || !effectiveContactId || !effectiveCompanyId) return;
                 if (activityId && markCompleteSelected) {
-                  setIsSubmitting(true);
-                  try {
+                    setIsSubmitting(true);
+                    try {
                     await submitActivity(activityId, { mark_complete: true });
+                    clearActivityDraftFromStorage(activityId);
                     setSubmitConfirmOpen(false);
                     setMarkCompleteSelected(false);
                   } finally {
@@ -1824,6 +1985,7 @@ function ActivityPageContent(): React.ReactElement {
                       contact_id: effectiveContactId,
                       company_id: effectiveCompanyId,
                     });
+                    clearActivityDraftFromStorage(activityId);
                     setSubmitConfirmOpen(false);
                     getCommunicationSummary(activityId).then(setCommSummary).catch(() => {});
                   } else {
@@ -1835,6 +1997,7 @@ function ActivityPageContent(): React.ReactElement {
                       contact_id: effectiveContactId,
                       company_id: effectiveCompanyId,
                     });
+                    clearActivityDraftFromStorage(null);
                     setSubmitConfirmOpen(false);
                     router.push(`/activity?id=${encodeURIComponent(res.id)}`);
                   }
