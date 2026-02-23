@@ -2,6 +2,8 @@
 Dashboard state endpoints (user_dashboard_state).
 """
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core.security import get_current_user_id
@@ -16,11 +18,16 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 DEFAULT_SORT_OPTION = "date_newest"
 
 
+def _today_yyyymmdd() -> str:
+    """Return today's date as YYYY-MM-DD in UTC."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
 @router.get(
     "/state",
     response_model=DashboardStateResponse,
     summary="Get dashboard state",
-    description="Fetch current user's dashboard state. Returns defaults if none exists.",
+    description="Fetch current user's dashboard state. Returns defaults if none exists. First load (no saved state) returns today's date so the user sees current day's activities.",
 )
 async def get_dashboard_state(
     user_id: str = Depends(get_current_user_id),
@@ -34,7 +41,7 @@ async def get_dashboard_state(
                 selected_activity_id=None,
                 sort_option=DEFAULT_SORT_OPTION,
                 filter_state={},
-                date_picker_value=None,
+                date_picker_value=_today_yyyymmdd(),
                 updated_at=None,
             )
         return DashboardStateResponse(
@@ -50,6 +57,28 @@ async def get_dashboard_state(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch dashboard state",
+        )
+
+
+@router.delete(
+    "/state",
+    status_code=204,
+    summary="Clear dashboard state",
+    description="Delete current user's saved dashboard state. Next GET will return defaults (today's date). Use on sign out so the user sees today's tasks when they sign back in.",
+)
+async def delete_dashboard_state(
+    user_id: str = Depends(get_current_user_id),
+    supabase: SupabaseService = Depends(get_supabase_service),
+) -> None:
+    """DELETE /api/v1/dashboard/state — clear saved dashboard state for this user."""
+    try:
+        await supabase.delete_dashboard_state(user_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete dashboard state",
         )
 
 
@@ -75,7 +104,7 @@ async def put_dashboard_state(
                     selected_activity_id=None,
                     sort_option=DEFAULT_SORT_OPTION,
                     filter_state={},
-                    date_picker_value=None,
+                    date_picker_value=_today_yyyymmdd(),
                     updated_at=None,
                 )
             return DashboardStateResponse(

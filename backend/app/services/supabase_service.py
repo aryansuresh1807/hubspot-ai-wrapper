@@ -583,6 +583,19 @@ class SupabaseService:
                 detail="Failed to update dashboard state",
             )
 
+    async def delete_dashboard_state(self, user_id: str) -> None:
+        """Delete the user's dashboard state row. After sign out, next GET returns defaults (today)."""
+        try:
+            self.client.table("user_dashboard_state").delete().eq(
+                "user_id", user_id
+            ).execute()
+        except Exception as e:
+            logger.error("Delete dashboard state error: %s", str(e))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to delete dashboard state",
+            )
+
     # -------------------------------------------------------------------------
     # Gmail OAuth tokens (gmail_tokens table)
     # -------------------------------------------------------------------------

@@ -557,7 +557,8 @@ export default function DashboardPage(): React.ReactElement {
     if (stored) loadedFromStorageRef.current = true;
   }, []);
 
-  // Sync local UI state from server/cache when dashboard state is available (only if we didn't load from sessionStorage)
+  // Sync local UI state from server/cache when dashboard state is available (only if we didn't load from sessionStorage).
+  // Backend returns today's date when no saved state (first load after sign-in), so we use state as-is.
   React.useEffect(() => {
     const state = dashboardStateQuery.data;
     if (!state || loadedFromStorageRef.current) return;

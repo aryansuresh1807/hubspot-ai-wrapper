@@ -101,6 +101,24 @@ export async function getDashboardState(): Promise<DashboardState> {
 }
 
 /**
+ * DELETE /api/v1/dashboard/state
+ * Clear saved dashboard state so next GET returns defaults (today's date). Call before sign out.
+ */
+export async function clearDashboardState(): Promise<void> {
+  try {
+    const url = buildApiUrl('/api/v1/dashboard/state');
+    const headers = await getAuthHeaders();
+    const res = await fetch(url, { method: 'DELETE', headers });
+    if (!res.ok) {
+      // Don't throw; sign out should proceed even if clear fails (e.g. network)
+      return;
+    }
+  } catch {
+    // Ignore so sign out is never blocked
+  }
+}
+
+/**
  * PUT /api/v1/dashboard/state
  * Update dashboard state (partial). Returns updated state.
  */

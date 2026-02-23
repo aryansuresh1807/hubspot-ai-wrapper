@@ -37,6 +37,7 @@ import {
 } from '@/components/ui/toast';
 import { StatusChip } from '@/components/shared/status-chip';
 import { useAuth } from '@/contexts/AuthContext';
+import { useQueryClient } from '@tanstack/react-query';
 import { Check, LogOut } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -96,8 +97,14 @@ export default function SettingsPage(): React.ReactElement {
   const resetToDefaults = useSettingsStore((s) => s.resetToDefaults);
   const isDirty = useSettingsStore((s) => s.isDirty);
   const { signOut, user } = useAuth();
+  const queryClient = useQueryClient();
 
   const [resetDialogOpen, setResetDialogOpen] = React.useState(false);
+
+  const handleSignOut = React.useCallback(() => {
+    queryClient.removeQueries({ queryKey: ['dashboardState'] });
+    signOut();
+  }, [queryClient, signOut]);
   const [savedFeedback, setSavedFeedback] = React.useState(false);
   const [toast, setToast] = React.useState<{
     open: boolean;
@@ -457,7 +464,7 @@ export default function SettingsPage(): React.ReactElement {
           <Button
             variant="outline"
             className="gap-2 text-status-at-risk border-status-at-risk/50 hover:bg-status-at-risk/10 hover:text-status-at-risk"
-            onClick={() => signOut()}
+            onClick={handleSignOut}
           >
             <LogOut className="h-4 w-4" />
             Sign Out

@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { clearDashboardState } from '@/lib/api'
 
 const AuthContext = createContext({})
 
@@ -75,6 +76,11 @@ export const AuthProvider = ({ children }) => {
 
   const signOut = async () => {
     try {
+      // Clear dashboard state (server + sessionStorage) so next sign-in shows today's tasks
+      await clearDashboardState().catch(() => {})
+      try {
+        sessionStorage.removeItem('dashboardState')
+      } catch (_) {}
       await supabase.auth.signOut()
       router.push('/login')
     } catch (error) {

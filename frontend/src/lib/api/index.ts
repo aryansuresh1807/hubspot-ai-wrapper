@@ -29,6 +29,7 @@ export {
 export {
   getDashboardState,
   updateDashboardState,
+  clearDashboardState,
   debouncedUpdateDashboardState,
   DebounceCancelledError,
 } from './dashboard';

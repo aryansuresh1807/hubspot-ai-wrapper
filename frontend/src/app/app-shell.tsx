@@ -2,16 +2,9 @@
 
 import * as React from 'react';
 import { usePathname } from 'next/navigation';
+import { Menu } from 'lucide-react';
 import { Sidebar } from '@/components/shared/sidebar';
-import { Topbar } from '@/components/shared/topbar';
-import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
-
-/** Matches AuthContext value from contexts/AuthContext.jsx */
-interface AuthContextValue {
-  user: { user_metadata?: { full_name?: string }; email?: string } | null;
-  signOut: () => void | Promise<void>;
-}
 
 const AUTH_PATH_PREFIXES = ['/login', '/sign-in', '/signin', '/signup', '/forgot-password', '/reset-password', '/auth'];
 
@@ -29,30 +22,15 @@ function isViewportConstrainedRoute(pathname: string): boolean {
 
 export interface AppShellProps {
   children: React.ReactNode;
-  /** Optional override for Topbar user (defaults to useAuth().user) */
-  user?: { name?: string | null; email?: string | null } | null;
-  /** Optional override for Sign Out (defaults to useAuth().signOut) */
-  onSignOut?: () => void;
   className?: string;
 }
 
 export function AppShell({
   children,
-  user: userProp,
-  onSignOut: onSignOutProp,
   className,
 }: AppShellProps): React.ReactElement {
   const pathname = usePathname();
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
-  const { user: authUser, signOut } = useAuth() as AuthContextValue;
-
-  const user = userProp ?? (authUser
-    ? {
-        name: authUser.user_metadata?.full_name ?? null,
-        email: authUser.email ?? null,
-      }
-    : null);
-  const onSignOut = onSignOutProp ?? signOut;
 
   const isAuth = isAuthRoute(pathname ?? '');
 
@@ -81,13 +59,18 @@ export function AppShell({
         onClose={() => setMobileMenuOpen(false)}
       />
 
+      {/* Mobile-only hamburger to open sidebar */}
+      <button
+        type="button"
+        onClick={() => setMobileMenuOpen(true)}
+        className="fixed left-4 top-4 z-20 flex h-10 w-10 md:hidden items-center justify-center rounded-lg border border-border bg-background text-foreground shadow-sm hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        aria-label="Open menu"
+      >
+        <Menu className="h-5 w-5" />
+      </button>
+
       {/* Main: full width on mobile, margin-left 72px on desktop */}
       <main className="h-screen md:ml-[72px] flex flex-col overflow-hidden">
-        <Topbar
-          user={user}
-          onSignOut={onSignOut}
-          onMenuClick={() => setMobileMenuOpen(true)}
-        />
         <div className={cn(
           'flex-1 min-h-0 flex flex-col p-4 md:p-6',
           isViewportConstrainedRoute(pathname ?? '') ? 'overflow-hidden' : 'overflow-y-auto'
