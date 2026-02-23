@@ -61,6 +61,8 @@ export interface DashboardActivity {
   created_at?: string | null;
   updated_at?: string | null;
   hubspot_id?: string | null;
+  /** Priority from HubSpot hs_task_priority: 'none' | 'low' | 'medium' | 'high' */
+  priority?: string | null;
   contacts?: ContactInfo[];
   companies?: CompanyInfo[];
 }
@@ -223,6 +225,8 @@ export interface ActivitySubmitRequest {
   subject?: string | null;
   contact_id?: string | null;
   company_id?: string | null;
+  /** Priority: 'none' | 'low' | 'medium' | 'high'. Maps to HubSpot hs_task_priority (LOW/MEDIUM/HIGH); 'none' omits. */
+  priority?: string | null;
 }
 
 export interface RegenerateDraftRequest {

@@ -32,6 +32,8 @@ from app.schemas.activity import (
     RecommendedTouchDateOut,
     RegenerateDraftRequest,
     SyncStatusResponse,
+    _hubspot_priority,
+    _response_priority,
 )
 from app.schemas.common import MessageResponse
 from app.services.claude_agents import (
@@ -238,6 +240,7 @@ def _activity_dict_to_response(a: dict[str, Any]) -> ActivityResponse:
         company_ids=a.get("company_ids", []),
         created_at=a.get("created_at"),
         updated_at=a.get("updated_at"),
+        priority=_response_priority(a.get("_priority")),
         contacts=contacts,
         companies=companies,
     )
@@ -1134,6 +1137,9 @@ async def create_and_submit_activity(
                 HS_TIMESTAMP: ts_ms,
             },
         }
+        hs_priority = _hubspot_priority(body.priority)
+        if hs_priority is not None:
+            payload["properties"][HS_PRIORITY] = hs_priority
         task = hubspot.create_task(payload)
         tid = task.get("id")
         if not tid:
@@ -1181,6 +1187,9 @@ async def submit_activity(
     try:
         if body.mark_complete:
             payload = {"properties": {HS_STATUS: "COMPLETED"}}
+            hs_priority = _hubspot_priority(body.priority)
+            if hs_priority is not None:
+                payload["properties"][HS_PRIORITY] = hs_priority
             task = hubspot.update_task(activity_id, payload)
             await supabase.upsert_task_cache(user_id, activity_id, task)
             return MessageResponse(message="Activity marked complete")
@@ -1267,6 +1276,9 @@ async def submit_activity(
                 HS_TIMESTAMP: ts_ms,
             },
         }
+        hs_priority = _hubspot_priority(body.priority)
+        if hs_priority is not None:
+            payload["properties"][HS_PRIORITY] = hs_priority
         task = hubspot.update_task(activity_id, payload)
         await supabase.upsert_task_cache(user_id, activity_id, task)
 

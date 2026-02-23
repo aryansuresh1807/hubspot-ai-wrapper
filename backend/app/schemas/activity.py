@@ -44,6 +44,20 @@ class ActivityUpdate(BaseModel):
     company_ids: list[str] | None = None
 
 
+def _response_priority(hubspot_value: str | None) -> str:
+    """Map HubSpot hs_task_priority (LOW/MEDIUM/HIGH or empty) to app priority: none | low | medium | high."""
+    if not hubspot_value or not hubspot_value.strip():
+        return "none"
+    v = hubspot_value.strip().upper()
+    if v == "LOW":
+        return "low"
+    if v == "MEDIUM":
+        return "medium"
+    if v == "HIGH":
+        return "high"
+    return "none"
+
+
 class Activity(ActivityBase):
     """Response schema; matches frontend Activity interface."""
     model_config = ConfigDict(from_attributes=True)
@@ -51,6 +65,7 @@ class Activity(ActivityBase):
     id: str
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    priority: str = "none"  # none | low | medium | high (from HubSpot hs_task_priority)
 
 
 class ContactInfo(BaseModel):
@@ -142,6 +157,20 @@ class ProcessNotesResponse(BaseModel):
     drafts: dict[str, DraftOut] = {}  # keys: original, formal, concise, warm, detailed
 
 
+def _hubspot_priority(value: str | None) -> str | None:
+    """Map app priority ('none'|'low'|'medium'|'high') to HubSpot hs_task_priority (LOW/MEDIUM/HIGH). None/none omitted."""
+    if not value or value.strip().lower() == "none":
+        return None
+    v = value.strip().lower()
+    if v == "low":
+        return "LOW"
+    if v == "medium":
+        return "MEDIUM"
+    if v == "high":
+        return "HIGH"
+    return None
+
+
 class ActivitySubmitRequest(BaseModel):
     """Request body for POST /activities/{id}/submit and POST /activities/create-and-submit."""
     mark_complete: bool = False
@@ -151,6 +180,7 @@ class ActivitySubmitRequest(BaseModel):
     subject: str | None = None  # task title
     contact_id: str | None = None
     company_id: str | None = None
+    priority: str | None = None  # none | low | medium | high -> HubSpot hs_task_priority (LOW/MEDIUM/HIGH)
 
 
 class CreateAndSubmitResponse(BaseModel):

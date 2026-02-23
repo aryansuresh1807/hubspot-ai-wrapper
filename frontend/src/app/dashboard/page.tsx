@@ -176,6 +176,9 @@ function apiActivityToDashboardItem(api: DashboardActivity): DashboardActivityIt
   const lastTouch = api.due_date ?? api.updated_at ?? api.created_at ?? new Date().toISOString();
   const rawSubject = api.subject ?? 'Untitled';
   const rawBody = api.body ?? '';
+  const priority = (api.priority === 'low' || api.priority === 'medium' || api.priority === 'high' || api.priority === 'none')
+    ? api.priority
+    : undefined;
   const activity: ActivityCardActivity = {
     id: api.id,
     contactName,
@@ -184,6 +187,7 @@ function apiActivityToDashboardItem(api: DashboardActivity): DashboardActivityIt
     noteExcerpt: stripHtml(rawBody),
     lastTouchDate: lastTouch,
     relationshipStatus: 'Active',
+    priority: priority ?? 'none',
     opportunityPercentage: 0,
     processingStatus: 'ready',
   };
@@ -700,7 +704,7 @@ export default function DashboardPage(): React.ReactElement {
         return false;
       if (
         filterApplied.processingStatus.length > 0 &&
-        !filterApplied.processingStatus.includes(a.processingStatus)
+        !filterApplied.processingStatus.includes(a.processingStatus as ProcessingStatusType)
       )
         return false;
       if (!isDateInRange(a.lastTouchDate, filterApplied.dateFrom, filterApplied.dateTo))

@@ -121,7 +121,7 @@ function useDebouncedValue<T>(value: T, delay: number): T {
 // ---------------------------------------------------------------------------
 
 type ProcessingStep = 'idle' | 'sent' | 'extracting' | 'ready';
-type UrgencyLevel = 'low' | 'medium' | 'high';
+type UrgencyLevel = 'none' | 'low' | 'medium' | 'high';
 type DraftTone = 'original' | 'formal' | 'concise' | 'warm' | 'detailed';
 
 interface RecommendedTouchDate {
@@ -855,7 +855,7 @@ function ActivityPageContent(): React.ReactElement {
   const [dueDate, setDueDate] = React.useState('');
   const [recognisedDate, setRecognisedDate] = React.useState<{ date: string | null; label: string | null; confidence: number }>({ date: null, label: null, confidence: 0 });
   const [recommendedTouch, setRecommendedTouch] = React.useState<{ date: string; label: string; rationale: string } | null>(null);
-  const [urgency, setUrgency] = React.useState<UrgencyLevel>('medium');
+  const [urgency, setUrgency] = React.useState<UrgencyLevel>('none');
   const [subject, setSubject] = React.useState('');
   const [nextSteps, setNextSteps] = React.useState('');
   const [questionsRaised, setQuestionsRaised] = React.useState('');
@@ -902,7 +902,7 @@ function ActivityPageContent(): React.ReactElement {
     setActivityOutcome(stored.activityOutcome ?? '');
     setRecognisedDate(stored.recognisedDate ?? { date: null, label: null, confidence: 0 });
     setRecommendedTouch(stored.recommendedTouch ?? null);
-    setUrgency(stored.urgency ?? 'medium');
+    setUrgency(stored.urgency ?? 'none');
     setNextSteps(stored.nextSteps ?? '');
     setQuestionsRaised(stored.questionsRaised ?? '');
     setSubjectConfidence(stored.subjectConfidence ?? 0);
@@ -978,6 +978,10 @@ function ActivityPageContent(): React.ReactElement {
         if (company) {
           setSelectedAccount({ id: company.id, name: company.name ?? undefined, domain: undefined, city: undefined, state: undefined });
           setAccountSearch(company.name ?? '');
+        }
+        const priority = a.priority;
+        if (priority === 'low' || priority === 'medium' || priority === 'high' || priority === 'none') {
+          setUrgency(priority);
         }
         setActivityLoading(false);
       })
@@ -1823,8 +1827,13 @@ function ActivityPageContent(): React.ReactElement {
               />
             </div>
             <div>
-              <Label>Urgency Level</Label>
+              <Label>Priority</Label>
               <div className="flex gap-2 mt-2">
+                <UrgencyButton
+                  label="None"
+                  active={urgency === 'none'}
+                  onClick={() => setUrgency('none')}
+                />
                 <UrgencyButton
                   label="Low"
                   active={urgency === 'low'}
@@ -1964,7 +1973,7 @@ function ActivityPageContent(): React.ReactElement {
                 if (activityId && markCompleteSelected) {
                     setIsSubmitting(true);
                     try {
-                    await submitActivity(activityId, { mark_complete: true });
+                    await submitActivity(activityId, { mark_complete: true, priority: urgency });
                     clearActivityDraftFromStorage(activityId);
                     setSubmitConfirmOpen(false);
                     setMarkCompleteSelected(false);
@@ -1984,6 +1993,7 @@ function ActivityPageContent(): React.ReactElement {
                       subject: subject.trim(),
                       contact_id: effectiveContactId,
                       company_id: effectiveCompanyId,
+                      priority: urgency,
                     });
                     clearActivityDraftFromStorage(activityId);
                     setSubmitConfirmOpen(false);
@@ -1996,6 +2006,7 @@ function ActivityPageContent(): React.ReactElement {
                       subject: subject.trim(),
                       contact_id: effectiveContactId,
                       company_id: effectiveCompanyId,
+                      priority: urgency,
                     });
                     clearActivityDraftFromStorage(null);
                     setSubmitConfirmOpen(false);
