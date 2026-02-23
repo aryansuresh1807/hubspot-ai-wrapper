@@ -641,7 +641,7 @@ function ImportFromCommunicationSection({
   return (
     <Card className="border-[1.5px]">
       <CardHeader className="py-2">
-        <CardTitle className="text-base flex items-center gap-2">
+        <CardTitle className="text-lg font-semibold flex items-center gap-2">
           <Mail className="h-4 w-4" />
           Import from communication
         </CardTitle>
@@ -1359,7 +1359,7 @@ function ActivityPageContent(): React.ReactElement {
         {/* 1. Note Editor */}
         <Card className="border-[1.5px]">
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">Notes</CardTitle>
+            <CardTitle className="text-lg font-semibold">Task Notes</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 pt-0">
             <Textarea
@@ -1447,7 +1447,7 @@ function ActivityPageContent(): React.ReactElement {
         {/* 3. Contact & Account */}
         <Card className="border-[1.5px]">
           <CardHeader>
-            <CardTitle className="text-base">Contact & Account</CardTitle>
+            <CardTitle className="text-lg font-semibold">Contact & Account</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <div ref={contactRef} className="relative">
@@ -1587,7 +1587,7 @@ function ActivityPageContent(): React.ReactElement {
         {/* 4. Quick Actions */}
         <Card className="border-[1.5px]">
           <CardHeader>
-            <CardTitle className="text-base">Quick Actions</CardTitle>
+            <CardTitle className="text-lg font-semibold">Quick Actions</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             {activityId ? (
@@ -1644,7 +1644,7 @@ function ActivityPageContent(): React.ReactElement {
         {/* 1. Communication summary (from client notes; stored per task in Supabase) */}
         <Card className="border-[1.5px] border-primary/30 bg-primary/5">
           <CardHeader className="space-y-0 pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
+            <CardTitle className="text-lg font-semibold flex items-center gap-2">
               <RefreshCw className="h-4 w-4 text-primary" />
               Communication summary
             </CardTitle>
@@ -1717,7 +1717,7 @@ function ActivityPageContent(): React.ReactElement {
         {/* 3. Dates (Activity Date + Due Date) */}
         <Card className="border-[1.5px]">
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">Dates</CardTitle>
+            <CardTitle className="text-lg font-semibold">Dates</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {processingStep === 'extracting' ? (
@@ -1830,7 +1830,7 @@ function ActivityPageContent(): React.ReactElement {
         {/* 4. Extracted Metadata */}
         <Card className="border-[1.5px]">
           <CardHeader>
-            <CardTitle className="text-base">Extracted Metadata - Upcoming Task</CardTitle>
+            <CardTitle className="text-lg font-semibold">Extracted Metadata - Upcoming Task</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {processingStep === 'extracting' ? (
@@ -1898,7 +1898,7 @@ function ActivityPageContent(): React.ReactElement {
         {/* 5. AI-Generated Drafts */}
         <Card className="border-[1.5px]">
           <CardHeader>
-            <CardTitle className="text-base">AI-Generated Notes</CardTitle>
+            <CardTitle className="text-lg font-semibold">AI-Generated Notes</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             {processingStep === 'extracting' ? (
