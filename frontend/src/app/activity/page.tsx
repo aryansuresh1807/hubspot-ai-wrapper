@@ -1604,14 +1604,13 @@ function ActivityPageContent(): React.ReactElement {
           </CardHeader>
           <CardContent className="space-y-3">
             {activityId ? (
-              <Button
-                variant={markCompleteSelected ? 'default' : 'outline'}
-                className="w-full"
-                onClick={() => setMarkCompleteSelected((v) => !v)}
-              >
-                <CheckCircle2 className={cn('h-4 w-4 mr-2', markCompleteSelected && 'opacity-90')} />
-                Mark Complete
-              </Button>
+              <label className="flex items-center gap-2 cursor-pointer text-sm text-foreground hover:text-foreground/90">
+                <Checkbox
+                  checked={markCompleteSelected}
+                  onCheckedChange={(checked) => setMarkCompleteSelected(checked === true)}
+                />
+                <span>Mark as complete</span>
+              </label>
             ) : null}
             <Button
               className="w-full"
