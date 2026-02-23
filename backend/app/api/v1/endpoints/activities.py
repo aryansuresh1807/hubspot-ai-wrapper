@@ -1456,6 +1456,7 @@ async def submit_activity(
                 HS_SUBJECT: body.subject.strip(),
                 HS_BODY: new_body,
                 HS_TIMESTAMP: ts_ms,
+                HS_STATUS: "NOT_STARTED",
             },
         }
         hs_priority = _hubspot_priority(body.priority)
