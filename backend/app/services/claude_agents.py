@@ -618,12 +618,15 @@ def extract_contact_from_email(
 
     user_email_instruction = ""
     if user_email and user_email.strip():
-        u = user_email.strip().lower()
         user_email_instruction = (
             f"\n**Current user's email (the person using this tool):** {user_email.strip()}\n"
-            "The CONTACT to extract is always the *other* party, not the user.\n"
-            "- If the email was SENT by the user (From matches the user's email): the contact is the RECIPIENT. Set contact email from the To field (extract the address only, e.g. from 'Name <a@b.com>' use 'a@b.com').\n"
-            "- If the email was RECEIVED by the user (To contains the user's email): the contact is the SENDER. Set contact email from the From field (extract the address only).\n"
+            "The CONTACT to extract is always the *other* party, not the user. Never extract the user's name, email, company, or phone as the contact.\n"
+            "- **If the email was SENT by the user** (From matches the user's email): the contact is the RECIPIENT. Use the To field for contact email (extract the address only, e.g. from 'Name <a@b.com>' use 'a@b.com'). When there are multiple recipients in To, the contact is the **primary (first) recipient**—use the first address in To that is not the user. For name and other fields, use the To header display name and any signature or body content that clearly refers to that recipient.\n"
+            "- **If the email was RECEIVED by the user** (To contains the user's email): the contact is the SENDER. Use the From field for contact email (extract the address only). For name and other fields, use the From header display name and the **sender's email signature** (see Email signatures below) as the primary source; then body/salutation if needed.\n"
+        )
+    else:
+        user_email_instruction = (
+            "\n**Note:** Current user's email was not provided. Treat the SENDER (From) as the contact and extract their details from the From header and the email body/signature. Do not assume the recipient is the contact unless context clearly indicates otherwise.\n"
         )
 
     prompt = """You are a CRM contact extraction agent. Your job is to extract structured contact and company information from a single email so it can be used to create or update a contact in HubSpot. Be thorough, consistent, and accurate.
@@ -631,17 +634,22 @@ def extract_contact_from_email(
 **Rules**
 1. Extract the MAIN contact (one person) and their organization. The contact is the person we want to add to the CRM.
 2. For every field, extract the most specific value you can find. Use empty string "" only when you truly cannot determine a value.
-3. Output ONLY valid JSON in the exact format below. No markdown code fences, no explanation, no other text.
+3. Output ONLY valid JSON in the exact format below. Do not wrap the JSON in markdown code fences. No explanation, no other text.
+4. When there are multiple recipients (To), the contact is the **primary recipient**: the first address in To that is not the user. Use that party's display name and any signature or body content that refers to them.
+5. **Do not** extract the current user's name, email, company, or phone as the contact. Do not infer company_name or company_domain from the contact's personal email domain (e.g. @gmail.com, @yahoo.com)—leave company fields empty unless the body or signature states a company.
 """ + user_email_instruction + """
+**Email signatures**
+Professional email signatures often appear at the end of the message (after sign-offs like "Best regards", "Cheers", "Thanks", "Kind regards", or "---") and contain detailed contact information. When the contact is the **sender** (received mail), treat the sender's signature as the **primary source** for: name, job title, company name, phone, city/state, and company domain. Common signature patterns include: "Name | Job Title | Company", block format (name on one line, title below, company below, phone/address), and lines with "M:" or "T:" for mobile/phone. Ignore legal disclaimers, confidentiality notices, and social/media links for extraction. When the contact is the **recipient** (sent mail), use the To header and any quoted reply or signature in the body that clearly refers to that recipient; otherwise rely on To display name and body context.
+
 **Field definitions**
-- **first_name, last_name:** The contact's given name and family name. Extract from salutations (e.g. "Dear John Smith" → first_name: "John", last_name: "Smith"), from signature (e.g. "Regards, Aryan" → if that is the contact), or from the contact's email display name. Split correctly; if only one name is given, put it in first_name and leave last_name "".
-- **email:** The contact's email address only (e.g. "john@company.com"). Use the rule above: if the user sent the email, contact email = To; if the user received it, contact email = From. Extract just the address from formats like "Name <email@domain.com>".
-- **phone:** Any phone number clearly associated with the contact. Digits only or E.164 if obvious; otherwise "".
-- **job_title:** Job title if stated (e.g. "VP of Sales"); otherwise "".
-- **company_name:** The company or organization the contact works for or is associated with. Look for: "your company X", "company X", "at X", "with X", "X Inc", "X Corp", "X Ltd", or the most prominent organization name in the body. Capitalize properly (e.g. "Facebook", not "facebook").
-- **company_domain:** The most likely official website domain for that company. Infer from the company name: e.g. "Facebook" → "facebook.com", "Microsoft" → "microsoft.com", "Acme Corp" → "acme.com". Use lowercase, no "www". Only leave "" if company_name is unknown or highly ambiguous.
-- **city, state_region:** Location if mentioned; otherwise "".
-- **company_owner:** Name or identifier of an owner/decision-maker at the company if mentioned; otherwise "".
+- **first_name, last_name:** The contact's given name and family name. For received mail the contact is the sender—use From display name and the sender's signature/body. For sent mail the contact is the recipient—use To display name and any signature/body referring to them. Never use the user's name. Split correctly; if only one name is given, put it in first_name and leave last_name "".
+- **email:** The contact's email address only (e.g. "john@company.com"). If the user sent the email, contact email = first non-user address in To; if the user received it, contact email = From. Extract just the address from formats like "Name <email@domain.com>".
+- **phone:** Phone number clearly associated with the contact. Prefer E.164 when a country code is present (e.g. +1 555 123 4567); otherwise digits only. Signatures often include "M:", "T:", "Tel:", or "Mobile:". Use "" if none found.
+- **job_title:** Job title if stated (e.g. "VP of Sales"). Signatures frequently include title; prefer signature over body when both exist. Otherwise "".
+- **company_name:** The company or organization the contact works for. Look in the contact's signature first, then: "company X", "at X", "X Inc", "X Corp", "X Ltd", or the most prominent organization name in the body. Capitalize properly. Do not infer from personal email domains (gmail, yahoo, etc.); leave "" unless stated.
+- **company_domain:** The most likely official website domain for that company. Infer from company name (e.g. "Acme Corp" → "acme.com"). Use lowercase, no "www". Leave "" if company_name is unknown or the contact uses a consumer email domain.
+- **city, state_region:** Location if mentioned (signature or body); otherwise "".
+- **company_owner:** Another person at the company (e.g. owner, decision-maker) if mentioned—**not** the contact themselves. Leave "" if not stated.
 
 **Output format (JSON only):**
 {"first_name": "", "last_name": "", "email": "", "phone": "", "job_title": "", "company_name": "", "company_domain": "", "city": "", "state_region": "", "company_owner": ""}
@@ -660,6 +668,7 @@ Body:
         msg = client.messages.create(
             model=DEFAULT_MODEL,
             max_tokens=1024,
+            temperature=0,
             messages=[{"role": "user", "content": prompt}],
         )
         block = msg.content[0] if msg.content else None
