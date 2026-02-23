@@ -464,6 +464,8 @@ function ImportFromCommunicationSection({
   const [emailSearchLoading, setEmailSearchLoading] = React.useState(false);
   const [emailSearchFullCache, setEmailSearchFullCache] = React.useState<GmailSearchMessage[] | null>(null);
   const [emailSearchFullCacheQuery, setEmailSearchFullCacheQuery] = React.useState('');
+  const [initialRecentEmails, setInitialRecentEmails] = React.useState<GmailSearchMessage[] | null>(null);
+  const [initialRecentLoading, setInitialRecentLoading] = React.useState(false);
   const [selectedEmailForImport, setSelectedEmailForImport] = React.useState<GmailSearchMessage | null>(null);
   const [confirmSendOpen, setConfirmSendOpen] = React.useState(false);
   const [extractLoading, setExtractLoading] = React.useState(false);
@@ -472,11 +474,27 @@ function ImportFromCommunicationSection({
   const [noteError, setNoteError] = React.useState<string | null>(null);
   const debouncedEmailQuery = useDebouncedValue(emailSearchQuery.trim(), 400);
 
+  // Load latest emails on mount (no search query) so the results section is pre-populated.
+  React.useEffect(() => {
+    let cancelled = false;
+    setInitialRecentLoading(true);
+    gmailSearchEmails('', 'all')
+      .then((list) => {
+        if (!cancelled) setInitialRecentEmails(list);
+      })
+      .catch(() => {
+        if (!cancelled) setInitialRecentEmails([]);
+      })
+      .finally(() => {
+        if (!cancelled) setInitialRecentLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  // When there is no search query, show initial recent emails (filtered by All/Inbox/Sent).
   React.useEffect(() => {
     if (!debouncedEmailQuery) {
-      setEmailSearchResults([]);
-      setEmailSearchFullCache(null);
-      setEmailSearchFullCacheQuery('');
+      setEmailSearchResults(filterMessagesByFolder(initialRecentEmails ?? [], emailSearchFolder));
       return;
     }
     const haveFullCacheForQuery =
@@ -505,7 +523,7 @@ function ImportFromCommunicationSection({
         if (!cancelled) setEmailSearchLoading(false);
       });
     return () => { cancelled = true; };
-  }, [debouncedEmailQuery, emailSearchFolder, emailSearchFullCache, emailSearchFullCacheQuery]);
+  }, [debouncedEmailQuery, emailSearchFolder, emailSearchFullCache, emailSearchFullCacheQuery, initialRecentEmails]);
 
   const handleSelectEmailForImport = (msg: GmailSearchMessage) => {
     setSelectedEmailForImport(msg);
@@ -584,7 +602,7 @@ function ImportFromCommunicationSection({
             className="pl-9 h-9"
             aria-label="Search Gmail"
           />
-          {emailSearchLoading && (
+          {(emailSearchLoading || (!debouncedEmailQuery && initialRecentLoading)) && (
             <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" aria-hidden />
           )}
         </div>
@@ -622,8 +640,10 @@ function ImportFromCommunicationSection({
             ))}
           </ul>
         )}
-        {!extractLoading && debouncedEmailQuery && emailSearchResults.length === 0 && !emailSearchLoading && (
-          <p className="text-xs text-muted-foreground py-1">No emails found. Try different keywords.</p>
+        {!extractLoading && emailSearchResults.length === 0 && !emailSearchLoading && !initialRecentLoading && (
+          <p className="text-xs text-muted-foreground py-1">
+            {debouncedEmailQuery ? 'No emails found. Try different keywords.' : 'No recent emails in this view.'}
+          </p>
         )}
       </CardContent>
 

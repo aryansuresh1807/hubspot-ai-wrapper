@@ -97,7 +97,7 @@ async def gmail_test(
 
 @router.get("/search")
 async def gmail_search(
-    q: str = Query(..., min_length=1, description="Gmail search query (keywords)"),
+    q: str = Query("", description="Gmail search query (keywords). Empty = return latest emails."),
     folder: str = Query("all", description="Search in: all, inbox, sent"),
     user_id: str = Depends(get_current_user_id),
     supabase: SupabaseService = Depends(get_supabase_service),
@@ -122,9 +122,10 @@ async def gmail_search(
     try:
         list_kwargs: Dict[str, Any] = {
             "userId": "me",
-            "q": q.strip(),
             "maxResults": 20,
         }
+        if q and q.strip():
+            list_kwargs["q"] = q.strip()
         if label_ids is not None:
             list_kwargs["labelIds"] = label_ids
         results = service.users().messages().list(**list_kwargs).execute()
