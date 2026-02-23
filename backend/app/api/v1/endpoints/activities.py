@@ -1148,6 +1148,11 @@ async def create_and_submit_activity(
             hubspot.associate_task_with_company(tid_str, body.company_id)
         except HubSpotServiceError as ae:
             logger.warning("Task company association failed: %s", ae.message)
+        try:
+            task_with_assoc = hubspot.get_task(tid_str, associations=["contacts", "companies"])
+            await supabase.upsert_task_cache(user_id, tid_str, task_with_assoc)
+        except HubSpotServiceError as ae:
+            logger.warning("Re-fetch task with associations failed: %s", ae.message)
         return CreateAndSubmitResponse(message="Activity created successfully", id=tid_str)
     except HTTPException:
         raise
@@ -1276,6 +1281,12 @@ async def submit_activity(
                 hubspot.associate_task_with_company(activity_id, body.company_id)
             except HubSpotServiceError as ae:
                 logger.warning("Task company association failed: %s", ae.message)
+
+        try:
+            task_with_assoc = hubspot.get_task(activity_id, associations=["contacts", "companies"])
+            await supabase.upsert_task_cache(user_id, activity_id, task_with_assoc)
+        except HubSpotServiceError as ae:
+            logger.warning("Re-fetch task with associations failed: %s", ae.message)
 
         return MessageResponse(message="Activity updated successfully")
     except HTTPException:

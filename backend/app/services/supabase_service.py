@@ -327,6 +327,42 @@ class SupabaseService:
             )
 
     # -------------------------------------------------------------------------
+    # HubSpot companies cache (hubspot_companies_cache table)
+    # -------------------------------------------------------------------------
+
+    async def upsert_company_cache(
+        self,
+        user_id: str,
+        hubspot_company_id: str,
+        data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Insert or update a single company in hubspot_companies_cache."""
+        try:
+            now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            response = (
+                self.client.table("hubspot_companies_cache")
+                .upsert(
+                    {
+                        "user_id": user_id,
+                        "hubspot_company_id": hubspot_company_id,
+                        "data": data,
+                        "last_synced_at": now,
+                    },
+                    on_conflict="user_id,hubspot_company_id",
+                )
+                .execute()
+            )
+            if response.data and len(response.data) > 0:
+                return response.data[0]
+            return {"user_id": user_id, "hubspot_company_id": hubspot_company_id, "data": data}
+        except Exception as e:
+            logger.error("Upsert company cache error: %s", str(e))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to update companies cache",
+            )
+
+    # -------------------------------------------------------------------------
     # Task communication summaries (task_communication_summaries table)
     # -------------------------------------------------------------------------
 

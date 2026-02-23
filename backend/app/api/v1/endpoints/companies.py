@@ -15,6 +15,7 @@ from app.schemas.company import (
     CompanySearchResult,
 )
 from app.services.hubspot_service import HubSpotService, HubSpotServiceError, get_hubspot_service
+from app.services.supabase_service import SupabaseService, get_supabase_service
 
 logger = logging.getLogger(__name__)
 
@@ -95,10 +96,11 @@ async def search_companies(
 )
 async def create_company(
     body: CompanyCreate,
+    user_id: str = Depends(get_current_user_id),
     hubspot: HubSpotService = Depends(get_hubspot_service),
-    _user_id: str = Depends(get_current_user_id),
+    supabase: SupabaseService = Depends(get_supabase_service),
 ) -> CompanyDetailResponse:
-    """POST /api/v1/companies/ — create company in HubSpot."""
+    """POST /api/v1/companies/ — create company in HubSpot and update local cache."""
     try:
         props = _company_create_to_hubspot_properties(body)
         payload = {"properties": props}
@@ -106,9 +108,11 @@ async def create_company(
         cid = company_data.get("id")
         if not cid:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="HubSpot did not return company id")
+        cid_str = str(cid)
+        await supabase.upsert_company_cache(user_id, cid_str, company_data)
         props_out = company_data.get("properties") or {}
         return CompanyDetailResponse(
-            id=str(cid),
+            id=cid_str,
             name=props_out.get(HS_NAME),
             domain=props_out.get(HS_DOMAIN),
             city=props_out.get(HS_CITY),
