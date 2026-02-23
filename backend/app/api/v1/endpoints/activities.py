@@ -65,10 +65,11 @@ HS_TYPE = "hs_task_type"
 
 
 def _normalize_notes_body(body: str) -> str:
-    """Ensure each note (MM/DD/YY - ...) is separated by a blank line for readability."""
+    """Ensure each note (date - ...) is separated by a blank line for readability."""
     if not body or not body.strip():
         return body.strip() if body else ""
-    parts = re.split(r"(?=\d{2}/\d{2}/\d{2} - )", body)
+    # Match date prefixes like 02/24/26 or 2/24/26 or 02/24/2026 followed by " - "
+    parts = re.split(r"(?=\d{1,2}/\d{1,2}/\d{2,4} - )", body)
     parts = [p.strip() for p in parts if p.strip()]
     return "\n\n".join(parts)
 
@@ -1333,6 +1334,7 @@ async def submit_activity(
                 new_note_line = f"{date_prefix} - {body.meeting_notes.strip()}"
                 normalized_existing = _normalize_notes_body(existing_body) if existing_body else ""
                 new_body = new_note_line + ("\n\n" + normalized_existing if normalized_existing else "")
+                new_body = _normalize_notes_body(new_body)
                 ts_ms = int(activity_dt.timestamp() * 1000)
                 payload = {
                     "properties": {
@@ -1435,6 +1437,7 @@ async def submit_activity(
         new_note_line = f"{date_prefix} - {body.meeting_notes.strip()}"
         normalized_existing = _normalize_notes_body(existing_body) if existing_body else ""
         new_body = new_note_line + ("\n\n" + normalized_existing if normalized_existing else "")
+        new_body = _normalize_notes_body(new_body)
 
         # Task due date in HubSpot (HS_TIMESTAMP). Use due_date if provided, else today.
         if body.due_date and body.due_date.strip():
