@@ -68,8 +68,8 @@ def _normalize_notes_body(body: str) -> str:
     """Ensure each note (date - ...) is separated by a blank line for readability."""
     if not body or not body.strip():
         return body.strip() if body else ""
-    # Match date prefixes like 02/24/26 or 2/24/26 or 02/24/2026 followed by " - "
-    parts = re.split(r"(?=\d{1,2}/\d{1,2}/\d{2,4} - )", body)
+    # Split before date prefixes (MM/DD/YY or M/D/YY etc.); require not after a digit so we don't split "02" into "0" and "2"
+    parts = re.split(r"(?<!\d)(?=\d{1,2}/\d{1,2}/\d{2,4} - )", body)
     parts = [p.strip() for p in parts if p.strip()]
     return "\n\n".join(parts)
 
