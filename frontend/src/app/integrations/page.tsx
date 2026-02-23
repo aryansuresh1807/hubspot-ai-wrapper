@@ -7,15 +7,15 @@ import {
   Mail,
   ChevronDown,
   ChevronUp,
-  Check,
   Loader2,
   Activity,
+  RefreshCw,
 } from 'lucide-react';
 import { Skeleton } from '@/components/shared/skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardTitle } from '@/components/ui/card';
 import {
   Select,
   SelectContent,
@@ -24,13 +24,28 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
+import {
   Toast,
   ToastTitle,
   ToastDescription,
   ToastClose,
 } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
-import { disconnectGmail, getGmailConnectUrl, getGmailStatus } from '@/lib/api/integrations';
+import {
+  disconnectGmail,
+  getGmailConnectUrl,
+  getGmailStatus,
+  getSyncLogs,
+  type SyncLogEntry as ApiSyncLogEntry,
+  type SyncLogListResponse,
+} from '@/lib/api/integrations';
+import { syncActivities } from '@/lib/api/activities';
 
 // ---------------------------------------------------------------------------
 // Types & mock data
@@ -65,23 +80,6 @@ const INTEGRATIONS: IntegrationTile[] = [
     status: 'connected',
     lastSync: '2024-01-15T14:30:00Z',
   },
-];
-
-interface SyncLogEntry {
-  id: string;
-  action: string;
-  status: SyncStatus;
-  timestamp: string;
-  durationMs: number;
-  details?: string;
-}
-
-const MOCK_SYNC_LOG: SyncLogEntry[] = [
-  { id: '1', action: 'Contacts sync', status: 'success', timestamp: '2024-01-15T14:32:00Z', durationMs: 2400 },
-  { id: '2', action: 'Activities sync', status: 'success', timestamp: '2024-01-15T14:30:00Z', durationMs: 1800 },
-  { id: '3', action: 'Deals sync', status: 'error', timestamp: '2024-01-15T14:28:00Z', durationMs: 500, details: 'Rate limit exceeded' },
-  { id: '4', action: 'Contacts sync', status: 'success', timestamp: '2024-01-15T12:00:00Z', durationMs: 2100 },
-  { id: '5', action: 'Email sync', status: 'error', timestamp: '2024-01-15T11:45:00Z', durationMs: 100, details: 'Connection timeout' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -138,7 +136,14 @@ export default function IntegrationsPage(): React.ReactElement {
   const [expandedSettings, setExpandedSettings] = React.useState<IntegrationId | null>(null);
   const [testLoading, setTestLoading] = React.useState<IntegrationId | null>(null);
   const [syncLogFilter, setSyncLogFilter] = React.useState<'all' | SyncStatus>('all');
-  const [syncLogPage, setSyncLogPage] = React.useState(0);
+  const [syncLogSource, setSyncLogSource] = React.useState<'all' | 'hubspot' | 'email'>('all');
+  const [syncLogPage, setSyncLogPage] = React.useState(1);
+  const [syncLogData, setSyncLogData] = React.useState<SyncLogListResponse | null>(null);
+  const [syncLogLoading, setSyncLogLoading] = React.useState(true);
+  const [syncLogError, setSyncLogError] = React.useState<string | null>(null);
+  const [selectedLogEntry, setSelectedLogEntry] = React.useState<ApiSyncLogEntry | null>(null);
+  const [hubspotSyncLoading, setHubspotSyncLoading] = React.useState(false);
+  const PAGE_SIZE = 10;
   const [toast, setToast] = React.useState<{
     open: boolean;
     variant: 'success' | 'error' | 'default';
@@ -235,14 +240,55 @@ export default function IntegrationsPage(): React.ReactElement {
     }
   };
 
-  const filteredLog = React.useMemo(() => {
-    const list = syncLogFilter === 'all' ? MOCK_SYNC_LOG : MOCK_SYNC_LOG.filter((e) => e.status === syncLogFilter);
-    return list;
-  }, [syncLogFilter]);
+  const fetchSyncLog = React.useCallback(async () => {
+    setSyncLogLoading(true);
+    setSyncLogError(null);
+    try {
+      const data = await getSyncLogs({
+        status: syncLogFilter,
+        source: syncLogSource,
+        page: syncLogPage,
+        page_size: PAGE_SIZE,
+      });
+      setSyncLogData(data);
+    } catch (e) {
+      setSyncLogError(e instanceof Error ? e.message : 'Failed to load sync log');
+      setSyncLogData(null);
+    } finally {
+      setSyncLogLoading(false);
+    }
+  }, [syncLogFilter, syncLogSource, syncLogPage]);
 
-  const PAGE_SIZE = 3;
-  const totalPages = Math.ceil(filteredLog.length / PAGE_SIZE) || 1;
-  const paginatedLog = filteredLog.slice(syncLogPage * PAGE_SIZE, (syncLogPage + 1) * PAGE_SIZE);
+  React.useEffect(() => {
+    fetchSyncLog();
+  }, [fetchSyncLog]);
+
+  const handleSyncNowHubSpot = async () => {
+    setHubspotSyncLoading(true);
+    try {
+      const result = await syncActivities();
+      if (result.synced) {
+        showToast(
+          'success',
+          'Sync completed',
+          result.tasks_count != null
+            ? `Synced ${result.tasks_count} task${result.tasks_count === 1 ? '' : 's'} from HubSpot.`
+            : undefined
+        );
+      } else {
+        showToast('error', 'Sync failed', result.message ?? undefined);
+      }
+      await fetchSyncLog();
+    } catch {
+      showToast('error', 'Sync failed', 'Could not run HubSpot activities sync.');
+      await fetchSyncLog();
+    } finally {
+      setHubspotSyncLoading(false);
+    }
+  };
+
+  const totalPages = syncLogData ? Math.ceil(syncLogData.total / PAGE_SIZE) || 1 : 1;
+  const paginatedLog = syncLogData?.entries ?? [];
 
   return (
     <ProtectedRoute>
@@ -354,7 +400,7 @@ export default function IntegrationsPage(): React.ReactElement {
                             </div>
                           </CardContent>
                         </Card>
-                        <div className="mt-4 flex items-center gap-3">
+                        <div className="mt-4 flex flex-wrap items-center gap-3">
                           <Button
                             onClick={() => handleTestConnection(int.id)}
                             disabled={testLoading !== null}
@@ -364,6 +410,19 @@ export default function IntegrationsPage(): React.ReactElement {
                               <Loader2 className="h-4 w-4 animate-spin" />
                             ) : null}
                             Test Connection
+                          </Button>
+                          <Button
+                            variant="outline"
+                            onClick={handleSyncNowHubSpot}
+                            disabled={hubspotSyncLoading}
+                            className="gap-2"
+                          >
+                            {hubspotSyncLoading ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <RefreshCw className="h-4 w-4" />
+                            )}
+                            Sync now
                           </Button>
                           {int.status === 'connected' && (
                             <span className="flex items-center gap-1.5 text-sm text-status-warm">
@@ -464,12 +523,12 @@ export default function IntegrationsPage(): React.ReactElement {
         <Card>
           <CardContent className="p-0">
             <div className="flex flex-wrap items-center gap-4 p-4 border-b">
-              <Label className="text-sm">Filter</Label>
+              <Label className="text-sm">Status</Label>
               <Select
                 value={syncLogFilter}
                 onValueChange={(v) => {
                   setSyncLogFilter(v as 'all' | SyncStatus);
-                  setSyncLogPage(0);
+                  setSyncLogPage(1);
                 }}
               >
                 <SelectTrigger className="w-[140px]">
@@ -481,12 +540,41 @@ export default function IntegrationsPage(): React.ReactElement {
                   <SelectItem value="error">Error</SelectItem>
                 </SelectContent>
               </Select>
+              <Label className="text-sm">Source</Label>
+              <Select
+                value={syncLogSource}
+                onValueChange={(v) => {
+                  setSyncLogSource(v as 'all' | 'hubspot' | 'email');
+                  setSyncLogPage(1);
+                }}
+              >
+                <SelectTrigger className="w-[140px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="hubspot">HubSpot</SelectItem>
+                  <SelectItem value="email">Email</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-            {filteredLog.length === 0 ? (
+            {syncLogLoading ? (
+              <div className="flex items-center justify-center gap-2 py-12 text-muted-foreground">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <span className="text-sm">Loading sync log…</span>
+              </div>
+            ) : syncLogError ? (
+              <div className="py-10 px-4 text-center">
+                <p className="text-sm text-status-at-risk">{syncLogError}</p>
+                <Button variant="outline" size="sm" className="mt-3" onClick={() => fetchSyncLog()}>
+                  Retry
+                </Button>
+              </div>
+            ) : !paginatedLog.length ? (
               <EmptyState
                 icon={Activity}
                 title="No sync activities yet."
-                description="Sync events will appear here once your integrations run."
+                description="Run a sync from Connection Settings (e.g. HubSpot “Sync now”) or sync events will appear here when integrations run."
                 className="py-10"
               />
             ) : (
@@ -512,14 +600,19 @@ export default function IntegrationsPage(): React.ReactElement {
                         </span>
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        {formatTimestamp(entry.timestamp)} · {formatDuration(entry.durationMs)}
+                        {formatTimestamp(entry.started_at)} · {formatDuration(entry.duration_ms)}
                       </p>
                       {entry.details && (
                         <p className="text-xs text-muted-foreground truncate" title={entry.details}>
                           {entry.details}
                         </p>
                       )}
-                      <Button variant="ghost" size="sm" className="h-8 mt-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 mt-1"
+                        onClick={() => setSelectedLogEntry(entry)}
+                      >
                         View Details
                       </Button>
                     </div>
@@ -554,11 +647,16 @@ export default function IntegrationsPage(): React.ReactElement {
                             </span>
                           </td>
                           <td className="p-3 text-muted-foreground">
-                            {formatTimestamp(entry.timestamp)}
+                            {formatTimestamp(entry.started_at)}
                           </td>
-                          <td className="p-3">{formatDuration(entry.durationMs)}</td>
+                          <td className="p-3">{formatDuration(entry.duration_ms)}</td>
                           <td className="p-3">
-                            <Button variant="ghost" size="sm" className="h-8">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-8"
+                              onClick={() => setSelectedLogEntry(entry)}
+                            >
                               View Details
                             </Button>
                           </td>
@@ -568,33 +666,100 @@ export default function IntegrationsPage(): React.ReactElement {
                   </table>
                 </div>
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-4 border-t">
-              <p className="text-xs text-muted-foreground">
-                Showing {syncLogPage * PAGE_SIZE + 1}–{Math.min((syncLogPage + 1) * PAGE_SIZE, filteredLog.length)} of {filteredLog.length}
-              </p>
-              <div className="flex gap-1">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={syncLogPage === 0}
-                  onClick={() => setSyncLogPage((p) => Math.max(0, p - 1))}
-                >
-                  Previous
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={syncLogPage >= totalPages - 1}
-                  onClick={() => setSyncLogPage((p) => Math.min(totalPages - 1, p + 1))}
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
+                  <p className="text-xs text-muted-foreground">
+                    Showing {(syncLogPage - 1) * PAGE_SIZE + 1}–
+                    {Math.min(syncLogPage * PAGE_SIZE, syncLogData?.total ?? 0)} of {syncLogData?.total ?? 0}
+                  </p>
+                  <div className="flex gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={syncLogPage <= 1}
+                      onClick={() => setSyncLogPage((p) => Math.max(1, p - 1))}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={syncLogPage >= totalPages}
+                      onClick={() => setSyncLogPage((p) => Math.min(totalPages, p + 1))}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
               </>
             )}
           </CardContent>
         </Card>
       </section>
+
+      {/* Sync log entry detail dialog */}
+      <Dialog open={!!selectedLogEntry} onOpenChange={(open) => !open && setSelectedLogEntry(null)}>
+        <DialogContent className="max-w-md" showClose>
+          {selectedLogEntry && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Sync log details</DialogTitle>
+                <DialogDescription>
+                  {selectedLogEntry.action} · {selectedLogEntry.status === 'success' ? 'Success' : 'Error'}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-3 text-sm">
+                <div className="grid grid-cols-[100px_1fr] gap-2">
+                  <span className="text-muted-foreground">Action</span>
+                  <span>{selectedLogEntry.action}</span>
+                </div>
+                <div className="grid grid-cols-[100px_1fr] gap-2">
+                  <span className="text-muted-foreground">Source</span>
+                  <span className="capitalize">{selectedLogEntry.source}</span>
+                </div>
+                <div className="grid grid-cols-[100px_1fr] gap-2">
+                  <span className="text-muted-foreground">Status</span>
+                  <span
+                    className={cn(
+                      'font-medium',
+                      selectedLogEntry.status === 'success'
+                        ? 'text-status-warm'
+                        : 'text-status-at-risk'
+                    )}
+                  >
+                    {selectedLogEntry.status === 'success' ? 'Success' : 'Error'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-[100px_1fr] gap-2">
+                  <span className="text-muted-foreground">Started</span>
+                  <span>{formatTimestamp(selectedLogEntry.started_at)}</span>
+                </div>
+                <div className="grid grid-cols-[100px_1fr] gap-2">
+                  <span className="text-muted-foreground">Finished</span>
+                  <span>{formatTimestamp(selectedLogEntry.finished_at)}</span>
+                </div>
+                <div className="grid grid-cols-[100px_1fr] gap-2">
+                  <span className="text-muted-foreground">Duration</span>
+                  <span>{formatDuration(selectedLogEntry.duration_ms)}</span>
+                </div>
+                {selectedLogEntry.details && (
+                  <div className="grid grid-cols-[100px_1fr] gap-2">
+                    <span className="text-muted-foreground">Details</span>
+                    <p className="text-muted-foreground break-words">{selectedLogEntry.details}</p>
+                  </div>
+                )}
+                {selectedLogEntry.metadata &&
+                  Object.keys(selectedLogEntry.metadata).length > 0 && (
+                    <div className="grid grid-cols-[100px_1fr] gap-2">
+                      <span className="text-muted-foreground">Metadata</span>
+                      <pre className="text-xs bg-muted/50 rounded p-2 overflow-x-auto">
+                        {JSON.stringify(selectedLogEntry.metadata, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Toast
         open={toast.open}

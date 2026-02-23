@@ -488,7 +488,8 @@ async def sync_activities(
     supabase: SupabaseService = Depends(get_supabase_service),
     hubspot: HubSpotService = Depends(get_hubspot_service),
 ) -> SyncStatusResponse:
-    """POST /api/v1/activities/sync — bypass cache and sync all tasks from HubSpot."""
+    """POST /api/v1/activities/sync — bypass cache and sync all tasks from HubSpot. Records sync log."""
+    started_at = datetime.now(timezone.utc)
     try:
         all_tasks: list[dict[str, Any]] = []
         after: str | None = None
@@ -507,6 +508,19 @@ async def sync_activities(
         await supabase.delete_tasks_cache_for_user(user_id)
         if all_tasks:
             await supabase.upsert_tasks_cache_bulk(user_id, all_tasks)
+        finished_at = datetime.now(timezone.utc)
+        duration_ms = int((finished_at - started_at).total_seconds() * 1000)
+        await supabase.insert_sync_log(
+            user_id=user_id,
+            source="hubspot",
+            action="Activities sync",
+            status="success",
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_ms=duration_ms,
+            details=None,
+            metadata={"tasks_count": len(all_tasks)},
+        )
         return SyncStatusResponse(
             synced=True,
             message="Sync completed successfully",
@@ -514,6 +528,19 @@ async def sync_activities(
         )
     except HubSpotServiceError as e:
         logger.warning("HubSpot sync error: %s", e.message)
+        finished_at = datetime.now(timezone.utc)
+        duration_ms = int((finished_at - started_at).total_seconds() * 1000)
+        await supabase.insert_sync_log(
+            user_id=user_id,
+            source="hubspot",
+            action="Activities sync",
+            status="error",
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_ms=duration_ms,
+            details=e.message or "HubSpot error during sync",
+            metadata={"tasks_count": 0},
+        )
         return SyncStatusResponse(
             synced=False,
             message=e.message or "HubSpot error during sync",
@@ -521,6 +548,19 @@ async def sync_activities(
         )
     except Exception as e:
         logger.exception("Sync activities error: %s", e)
+        finished_at = datetime.now(timezone.utc)
+        duration_ms = int((finished_at - started_at).total_seconds() * 1000)
+        await supabase.insert_sync_log(
+            user_id=user_id,
+            source="hubspot",
+            action="Activities sync",
+            status="error",
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_ms=duration_ms,
+            details="Failed to sync activities",
+            metadata={},
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to sync activities",

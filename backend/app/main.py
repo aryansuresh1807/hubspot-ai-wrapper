@@ -142,6 +142,7 @@ def root():
             "dashboard": "/api/v1/dashboard",
             "hubspot": "/api/v1/hubspot",
             "llm": "/api/v1/llm",
+            "sync-logs": "/api/v1/sync-logs",
         },
     }
 

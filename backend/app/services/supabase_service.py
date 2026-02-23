@@ -623,6 +623,79 @@ class SupabaseService:
             logger.error("Delete Gmail tokens error: %s", str(e))
             return False
 
+    # -------------------------------------------------------------------------
+    # Sync log (integration sync audit trail)
+    # -------------------------------------------------------------------------
+
+    async def insert_sync_log(
+        self,
+        user_id: str,
+        source: str,
+        action: str,
+        status: str,
+        started_at: datetime,
+        finished_at: datetime,
+        duration_ms: int,
+        details: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Append a sync log entry. Used by activities sync and other integration syncs."""
+        try:
+            row: Dict[str, Any] = {
+                "user_id": user_id,
+                "source": source,
+                "action": action,
+                "status": status,
+                "started_at": started_at.isoformat().replace("+00:00", "Z"),
+                "finished_at": finished_at.isoformat().replace("+00:00", "Z"),
+                "duration_ms": duration_ms,
+                "details": details,
+                "metadata": metadata or {},
+            }
+            response = self.client.table("sync_log").insert(row).execute()
+            if response.data and len(response.data) > 0:
+                out = dict(response.data[0])
+                out["id"] = str(out["id"])
+                return out
+            return {"id": "", **row}
+        except Exception as e:
+            logger.error("Insert sync log error: %s", str(e))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to record sync log",
+            )
+
+    async def list_sync_logs(
+        self,
+        user_id: str,
+        status_filter: Optional[str] = None,
+        source_filter: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[Dict[str, Any]], int]:
+        """List sync log entries for user with optional filters. Returns (rows, total_count)."""
+        try:
+            q = (
+                self.client.table("sync_log")
+                .select("id, source, action, status, started_at, finished_at, duration_ms, details, metadata, created_at", count="exact")
+                .eq("user_id", user_id)
+                .order("created_at", desc=True)
+            )
+            if status_filter and status_filter != "all":
+                q = q.eq("status", status_filter)
+            if source_filter and source_filter != "all":
+                q = q.eq("source", source_filter)
+            response = q.range(offset, offset + limit - 1).execute()
+            total = response.count if response.count is not None else len(response.data or [])
+            rows = list(response.data or [])
+            for r in rows:
+                if r.get("id"):
+                    r["id"] = str(r["id"])
+            return rows, total
+        except Exception as e:
+            logger.error("List sync logs error: %s", str(e))
+            return [], 0
+
 
 def get_supabase_service() -> SupabaseService:
     """Dependency for FastAPI."""
