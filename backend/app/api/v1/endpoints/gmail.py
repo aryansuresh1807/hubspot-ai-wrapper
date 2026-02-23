@@ -246,6 +246,12 @@ async def gmail_generate_activity_note(
     message_id = (body.message_id or "").strip()
     if not message_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="message_id is required")
+    tokens_row = await supabase.get_gmail_tokens(user_id)
+    if not tokens_row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Gmail not connected. Connect Gmail from Integrations first.",
+        )
     service = await get_gmail_client(user_id, supabase)
     if not service:
         raise HTTPException(
@@ -269,11 +275,13 @@ async def gmail_generate_activity_note(
     email_to = headers.get("to", "")
     subject = headers.get("subject", "")
     body_text = _get_body_from_payload(msg.get("payload") or {})
+    user_email = (tokens_row.get("email") or "").strip() or None
     note = generate_activity_note_from_email(
         sender=email_from,
         to=email_to,
         subject=subject,
         body=body_text,
+        user_email=user_email,
     )
     return {"note": note or ""}
 

@@ -721,11 +721,14 @@ def generate_activity_note_from_email(
     to: str,
     subject: str,
     body: str,
+    user_email: str | None = None,
 ) -> str:
     """
     Use the full email (from, to, subject, body) as context and produce a brief
-    activity note suitable for the activity Notes field. This eliminates the
-    user having to manually write a note for that email.
+    activity note suitable for the activity Notes field, written from the user's
+    perspective. The note states whether the user received or sent the email and
+    what it mentions. user_email is the connected mailbox owner; when provided,
+    direction (sent vs received) is determined so the note is phrased correctly.
     Returns plain text only (no JSON).
     """
     combined = (sender or "") + (to or "") + (subject or "") + (body or "")
@@ -736,15 +739,48 @@ def generate_activity_note_from_email(
     if len(body or "") > 14000:
         body_truncated += "\n\n[Content truncated for length.]"
 
-    prompt = """You are an assistant that turns emails into brief activity notes for a CRM.
+    # Determine direction: user sent iff From address is the user's email
+    sent_by_user = False
+    if user_email and (sender or "").strip():
+        from_addr = _extract_email_address(sender)
+        if from_addr and from_addr.strip().lower() == user_email.strip().lower():
+            sent_by_user = True
 
-Given the email below (From, To, Subject, and body), write a short, clear activity note that:
-- Summarizes what the email is about and any key points or outcomes.
-- Mentions the other party (contact) where relevant (e.g. "Discussion with John re: Q1 proposal").
-- Is written in past tense or neutral tone, suitable for a log entry (e.g. "Email from Jane: requested proposal by Friday. Follow-up call agreed for next week.").
-- Is concise: 2–5 sentences typically. No bullet lists unless the email had a clear list of action items; prefer flowing prose.
+    direction_instruction: str
+    if user_email and user_email.strip():
+        if sent_by_user:
+            direction_instruction = (
+                "This email was SENT BY the user (From = user's address). You MUST write the opening as if the user is the subject: "
+                "'Sent an email to [contact].' or 'Replied to [contact].' — where [contact] is the recipient's name (from the To header or body, e.g. 'Dear X'); never use an email address. "
+                "Do NOT write 'Email from [user]' or mention the user's name; the note is the user's own log, so the user is implied. "
+                "After the opening sentence, use 'It mentions that...' or 'It noted that...' to describe what was communicated."
+            )
+        else:
+            direction_instruction = (
+                "This email was RECEIVED BY the user (the user is in To; the sender is the other party). "
+                "You MUST start with 'Received an email from [contact].' — where [contact] is the sender's name (from the From header or body); never use an email address. "
+                "After the opening sentence, use 'It mentions that...' or 'It stated that...' to describe what was communicated."
+            )
+    else:
+        direction_instruction = (
+            "Infer from From/To who sent vs received. If the activity owner sent it: start with 'Sent an email to [contact]' (contact = recipient's name). "
+            "If they received it: start with 'Received an email from [contact]' (contact = sender's name). Use only names, never email addresses; never mention the activity owner's name."
+        )
 
-Output ONLY the note text. No headings, no "Note:", no JSON, no markdown. Plain text only.
+    prompt = """You are an assistant that turns emails into brief, consistent activity notes for a CRM. The note is a first-person-style log entry: it describes what **the user** (the activity owner) did or received. The user is never named in the note—they are the implied subject.
+
+**Rules (follow strictly):**
+
+1. **Opening sentence — direction:**
+""" + direction_instruction + """
+
+2. **Never mention the user's name.** The note is the user's own activity log. When they sent the email, do NOT say "Email from [user name]" or "Email by [user name]". Say "Sent an email to [contact]." The contact is always the *other* party: if the user sent the email, contact = recipient (To); if the user received it, contact = sender (From).
+
+3. **Never include any email address in the note.** Refer to the contact by **name only**. Use the contact's name when it appears in: (a) the From/To header display name (e.g. "Lakshmi B <...>"), or (b) the email body (e.g. "Dear Lakshmi B"). If no name is available, do NOT fall back to the email address—instead write "Sent an email." or "Received an email." and continue with "It mentions that..." and the details. The note must never contain an email address (no @ or domain).
+
+4. **Content:** After the opening, use "It mentions that...", "It stated that...", or "It noted that..." and in 1–3 sentences capture key points, requests, or outcomes. Past tense, neutral tone. If the email body explicitly mentions a date, time, or meeting time, include it in the note (e.g. "It mentions that the meeting is scheduled for Friday at 3pm.").
+
+5. **Format:** Flowing prose only. No bullets, no "Note:", no JSON, no markdown. Typically 2–4 sentences. Output ONLY the note text.
 
 ---
 Email to turn into an activity note:
