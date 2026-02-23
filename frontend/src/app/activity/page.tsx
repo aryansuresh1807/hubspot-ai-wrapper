@@ -49,6 +49,12 @@ import {
 } from '@/components/ui/dialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Toast,
+  ToastTitle,
+  ToastDescription,
+  ToastClose,
+} from '@/components/ui/toast';
 import { Skeleton } from '@/components/shared/skeleton';
 import { cn } from '@/lib/utils';
 import {
@@ -897,6 +903,14 @@ function ActivityPageContent(): React.ReactElement {
   const [commSummaryLoading, setCommSummaryLoading] = React.useState(false);
   const [commSummaryError, setCommSummaryError] = React.useState<string | null>(null);
   const [processConfirmOpen, setProcessConfirmOpen] = React.useState(false);
+  const [toast, setToast] = React.useState<{ open: boolean; variant: 'success' | 'error'; title: string; description?: string }>({
+    open: false,
+    variant: 'success',
+    title: '',
+  });
+  const showToast = (variant: 'success' | 'error', title: string, description?: string) => {
+    setToast({ open: true, variant, title, description });
+  };
   const draftSentForProcessingRef = React.useRef<string>('');
   const restoredFromDraftRef = React.useRef(false);
 
@@ -2048,6 +2062,7 @@ function ActivityPageContent(): React.ReactElement {
                     setSubmitConfirmOpen(false);
                     setMarkCompleteSelected(false);
                     getCommunicationSummary(activityId).then(setCommSummary).catch(() => {});
+                    showToast('success', 'Activity submitted');
                   } finally {
                     setIsSubmitting(false);
                   }
@@ -2070,6 +2085,7 @@ function ActivityPageContent(): React.ReactElement {
                     clearActivityDraftFromStorage(activityId);
                     setSubmitConfirmOpen(false);
                     getCommunicationSummary(activityId).then(setCommSummary).catch(() => {});
+                    showToast('success', 'Activity submitted');
                   } else {
                     const res = await createAndSubmitActivity({
                       meeting_notes: noteContent.trim(),
@@ -2082,6 +2098,7 @@ function ActivityPageContent(): React.ReactElement {
                     });
                     clearActivityDraftFromStorage(null);
                     setSubmitConfirmOpen(false);
+                    showToast('success', 'Activity submitted');
                     router.push(`/activity?id=${encodeURIComponent(res.id)}`);
                   }
                 } finally {
@@ -2149,6 +2166,16 @@ function ActivityPageContent(): React.ReactElement {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Toast
+        open={toast.open}
+        onOpenChange={(open) => !open && setToast((p) => ({ ...p, open: false }))}
+        variant={toast.variant}
+      >
+        <ToastTitle>{toast.title}</ToastTitle>
+        {toast.description && <ToastDescription>{toast.description}</ToastDescription>}
+        <ToastClose />
+      </Toast>
     </div>
     </ProtectedRoute>
   );
