@@ -113,8 +113,11 @@ export type SortOption =
 
 export type PriorityFilterOption = 'none' | 'low' | 'medium' | 'high';
 
+export type TaskStatusFilterOption = 'completed' | 'not_completed';
+
 export interface FilterState {
   priority: PriorityFilterOption[];
+  taskStatus: TaskStatusFilterOption[];
   dateFrom: string;
   dateTo: string;
 }
@@ -216,10 +219,13 @@ function apiActivityToDashboardItem(api: DashboardActivity): DashboardActivityIt
   };
 }
 
+const TASK_STATUS_FILTER_OPTIONS: TaskStatusFilterOption[] = ['completed', 'not_completed'];
+
 /** Serialize local FilterState to API filter_state */
 function filterStateToApi(filter: FilterState): Record<string, unknown> {
   return {
     priority: filter.priority,
+    taskStatus: filter.taskStatus,
     dateFrom: filter.dateFrom || undefined,
     dateTo: filter.dateTo || undefined,
   };
@@ -233,8 +239,14 @@ function filterStateFromApi(state: Record<string, unknown> | undefined): FilterS
         PRIORITY_FILTER_OPTIONS.includes(p)
       )
     : [];
+  const taskStatus = Array.isArray(state.taskStatus)
+    ? (state.taskStatus as TaskStatusFilterOption[]).filter((s) =>
+        TASK_STATUS_FILTER_OPTIONS.includes(s)
+      )
+    : [];
   return {
     priority,
+    taskStatus,
     dateFrom: typeof state.dateFrom === 'string' ? state.dateFrom : '',
     dateTo: typeof state.dateTo === 'string' ? state.dateTo : '',
   };
@@ -384,6 +396,7 @@ function sortActivities(
 
 const DEFAULT_FILTER: FilterState = {
   priority: [],
+  taskStatus: [],
   dateFrom: '',
   dateTo: '',
 };
@@ -512,6 +525,7 @@ export default function DashboardPage(): React.ReactElement {
   );
   const [activitySearchQuery, setActivitySearchQuery] = React.useState('');
   const [completingId, setCompletingId] = React.useState<string | null>(null);
+  const [completeConfirmActivity, setCompleteConfirmActivity] = React.useState<ActivityCardActivity | null>(null);
   const [isSyncing, setIsSyncing] = React.useState(false);
   const [lastSyncedAt, setLastSyncedAt] = React.useState<number | null>(null);
   const [isOffline, setIsOffline] = React.useState(false);
@@ -698,18 +712,23 @@ export default function DashboardPage(): React.ReactElement {
 
   const filtered = React.useMemo(() => {
     return filteredByDate.filter((item) => {
-      // In search mode (HubSpot keyword search) show all results including completed
-      if (!isSearchMode && completedIds.has(item.activity.id)) return false;
       const a = item.activity;
       if (filterApplied.priority.length > 0) {
         const taskPriority = a.priority ?? 'none';
         if (!filterApplied.priority.includes(taskPriority)) return false;
       }
+      if (filterApplied.taskStatus.length > 0) {
+        const isCompleted = completedIds.has(item.activity.id);
+        const wantCompleted = filterApplied.taskStatus.includes('completed');
+        const wantNotCompleted = filterApplied.taskStatus.includes('not_completed');
+        if (isCompleted && !wantCompleted) return false;
+        if (!isCompleted && !wantNotCompleted) return false;
+      }
       if (!isDateInRange(a.lastTouchDate, filterApplied.dateFrom, filterApplied.dateTo))
         return false;
       return true;
     });
-  }, [filteredByDate, filterApplied, completedIds, isSearchMode]);
+  }, [filteredByDate, filterApplied, completedIds]);
 
   const sortedItems = React.useMemo(
     () => sortActivities(filtered, sort),
@@ -736,7 +755,8 @@ export default function DashboardPage(): React.ReactElement {
   const isShowingAllTasks =
     filterApplied.dateFrom === ALL_TASKS_DATE_FROM &&
     filterApplied.dateTo === ALL_TASKS_DATE_TO &&
-    filterApplied.priority.length === 0;
+    filterApplied.priority.length === 0 &&
+    filterApplied.taskStatus.length === 0;
 
   /** Date Newest / Date Oldest are only available when showing all tasks (no date filter). */
   const dateSortsAllowed = isShowingAllTasks;
@@ -751,6 +771,7 @@ export default function DashboardPage(): React.ReactElement {
   const hasActiveFilters =
     !isShowingAllTasks &&
     (filterApplied.priority.length > 0 ||
+      filterApplied.taskStatus.length > 0 ||
       !!filterApplied.dateFrom ||
       !!filterApplied.dateTo ||
       !!datePickerValue);
@@ -767,6 +788,12 @@ export default function DashboardPage(): React.ReactElement {
       const labels = filterApplied.priority.map((p) => p.charAt(0).toUpperCase() + p.slice(1));
       parts.push(`Priority: ${labels.join(', ')}`);
     }
+    if (filterApplied.taskStatus.length > 0) {
+      const labels = filterApplied.taskStatus.map((s) =>
+        s === 'completed' ? 'Completed' : 'Not completed'
+      );
+      parts.push(`Task status: ${labels.join(', ')}`);
+    }
     if (datePickerValue) {
       parts.push(`Date: ${format(new Date(datePickerValue + 'T00:00:00'), 'dd MMM yyyy')}`);
     } else if (
@@ -779,7 +806,7 @@ export default function DashboardPage(): React.ReactElement {
       );
     }
     return parts.length > 0 ? parts.join(' · ') : 'No filters applied';
-  }, [activitySearchQuery, isShowingAllTasks, hasActiveFilters, filterApplied.priority, filterApplied.dateFrom, filterApplied.dateTo, datePickerValue]);
+  }, [activitySearchQuery, isShowingAllTasks, hasActiveFilters, filterApplied.priority, filterApplied.taskStatus, filterApplied.dateFrom, filterApplied.dateTo, datePickerValue]);
 
   const handleApplyFilter = () => {
     setFilterApplied(filterDraft);
@@ -818,28 +845,47 @@ export default function DashboardPage(): React.ReactElement {
     [router, activities]
   );
 
-  const handleComplete = React.useCallback(
-    async (activity: ActivityCardActivity) => {
+  const handleCompleteClick = React.useCallback(
+    (activity: ActivityCardActivity) => {
       if (isOffline) {
         showToast('warning', 'Working offline', 'Create and update are disabled until you\'re back online.');
         return;
       }
+      setCompleteConfirmActivity(activity);
+    },
+    [showToast, isOffline]
+  );
+
+  const handleCompleteConfirm = React.useCallback(
+    async () => {
+      const activity = completeConfirmActivity;
+      if (!activity) return;
       setCompletingId(activity.id);
       try {
         await completeActivity(activity.id);
-        if (selectedActivityId === activity.id) {
-          const next = activities.find((i) => i.activity.id !== activity.id && !completedIds.has(i.activity.id));
-          setSelectedActivityId(next?.activity.id ?? null);
+        setCompleteConfirmActivity(null);
+        showToast('success', 'Activity completed', `${activity.subject} marked as complete.`);
+        // Sync with HubSpot so the app stays up to date with the recently updated database
+        try {
+          const res = await syncActivities();
+          if (res.synced) {
+            setLastSyncedAt(Date.now());
+            setIsOffline(false);
+          } else {
+            showToast('warning', 'Sync warning', res.message ?? 'Sync with HubSpot did not complete.');
+          }
+        } catch (syncErr) {
+          if (isNetworkError(syncErr)) setIsOffline(true);
+          showToast('warning', 'Sync failed', syncErr instanceof Error ? syncErr.message : 'Could not sync with HubSpot.');
         }
         await queryClient.invalidateQueries({ queryKey: [ACTIVITIES_QUERY_KEY] });
-        showToast('success', 'Activity completed', `${activity.subject} marked as complete.`);
       } catch (err) {
         showToast('error', 'Failed to complete activity', err instanceof Error ? err.message : 'Try again.');
       } finally {
         setCompletingId(null);
       }
     },
-    [selectedActivityId, activities, completedIds, showToast, isOffline, queryClient]
+    [completeConfirmActivity, showToast, queryClient]
   );
 
   const handleRefresh = React.useCallback(async () => {
@@ -946,6 +992,30 @@ export default function DashboardPage(): React.ReactElement {
                       }
                     />
                     {p.charAt(0).toUpperCase() + p.slice(1)}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <Label>Task status</Label>
+              <div className="flex flex-wrap gap-3">
+                {TASK_STATUS_FILTER_OPTIONS.map((s) => (
+                  <label
+                    key={s}
+                    className="flex items-center gap-2 text-sm cursor-pointer"
+                  >
+                    <Checkbox
+                      checked={filterDraft.taskStatus.includes(s)}
+                      onCheckedChange={(checked) =>
+                        setFilterDraft((prev) => ({
+                          ...prev,
+                          taskStatus: checked
+                            ? [...prev.taskStatus, s]
+                            : prev.taskStatus.filter((x) => x !== s),
+                        }))
+                      }
+                    />
+                    {s === 'completed' ? 'Completed' : 'Not completed'}
                   </label>
                 ))}
               </div>
@@ -1198,9 +1268,10 @@ export default function DashboardPage(): React.ReactElement {
                   key={item.activity.id}
                   activity={item.activity}
                   isSelected={selectedActivityId === item.activity.id}
+                  completed={completedIds.has(item.activity.id)}
                   onClick={() => setSelectedActivityId(item.activity.id)}
                   onOpen={handleOpen}
-                  onComplete={handleComplete}
+                  onComplete={handleCompleteClick}
                 />
               ))
             )}
@@ -1255,6 +1326,26 @@ export default function DashboardPage(): React.ReactElement {
           )}
         </section>
       </div>
+
+      {/* Complete confirmation dialog */}
+      <Dialog open={!!completeConfirmActivity} onOpenChange={(open) => !open && setCompleteConfirmActivity(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Mark activity as complete</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Mark this Activity as complete?
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCompleteConfirmActivity(null)}>
+              Cancel
+            </Button>
+            <Button onClick={handleCompleteConfirm} disabled={!completeConfirmActivity || completingId === completeConfirmActivity?.id}>
+              Yes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Toast */}
       <Toast

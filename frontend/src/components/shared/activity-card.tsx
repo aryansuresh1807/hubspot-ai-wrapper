@@ -28,6 +28,8 @@ export interface ActivityCardActivity {
 export interface ActivityCardProps {
   activity: ActivityCardActivity;
   isSelected?: boolean;
+  /** When true, card shows green tint and Complete button shows "Completed" (disabled). */
+  completed?: boolean;
   onClick?: () => void;
   onOpen?: (activity: ActivityCardActivity) => void;
   onComplete?: (activity: ActivityCardActivity) => void;
@@ -39,6 +41,7 @@ const ActivityCard = React.forwardRef<HTMLDivElement, ActivityCardProps>(
     {
       activity,
       isSelected = false,
+      completed = false,
       onClick,
       onOpen,
       onComplete,
@@ -58,7 +61,7 @@ const ActivityCard = React.forwardRef<HTMLDivElement, ActivityCardProps>(
 
     const handleComplete = (e: React.MouseEvent) => {
       e.stopPropagation();
-      onComplete?.(activity);
+      if (!completed) onComplete?.(activity);
     };
 
     return (
@@ -77,6 +80,7 @@ const ActivityCard = React.forwardRef<HTMLDivElement, ActivityCardProps>(
           'cursor-pointer transition-shadow duration-200',
           'hover:shadow-card-hover',
           isSelected ? 'border-2 border-status-active' : 'border-2 border-border',
+          completed && 'bg-green-500/12 border-2 border-green-700/60 dark:bg-green-500/10 dark:border-2 dark:border-green-600/55',
           className
         )}
       >
@@ -127,11 +131,15 @@ const ActivityCard = React.forwardRef<HTMLDivElement, ActivityCardProps>(
             <Button
               variant="ghost"
               size="sm"
-              className="h-8 px-2 text-xs gap-1"
+              className={cn(
+                'h-8 px-2 text-xs gap-1',
+                completed && 'cursor-default font-semibold text-green-900 dark:text-green-200 bg-white/60 dark:bg-black/30 border border-green-600/30 dark:border-green-500/35'
+              )}
               onClick={handleComplete}
+              disabled={completed}
             >
-              <Check className="h-3.5 w-3" />
-              Complete
+              <Check className="h-3.5 w-3 shrink-0" />
+              {completed ? 'Completed' : 'Complete'}
             </Button>
           </div>
         </CardContent>
