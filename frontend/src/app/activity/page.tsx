@@ -460,10 +460,13 @@ function ImportFromCommunicationSection({
 }): React.ReactElement {
   const [emailSearchQuery, setEmailSearchQuery] = React.useState('');
   const [emailSearchFolder, setEmailSearchFolder] = React.useState<GmailSearchFolder>('all');
+  /** Optional date filter (YYYY-MM-DD). When set, only emails from that day are shown. */
+  const [emailSearchDate, setEmailSearchDate] = React.useState<string>('');
   const [emailSearchResults, setEmailSearchResults] = React.useState<GmailSearchMessage[]>([]);
   const [emailSearchLoading, setEmailSearchLoading] = React.useState(false);
   const [emailSearchFullCache, setEmailSearchFullCache] = React.useState<GmailSearchMessage[] | null>(null);
   const [emailSearchFullCacheQuery, setEmailSearchFullCacheQuery] = React.useState('');
+  const [emailSearchFullCacheDate, setEmailSearchFullCacheDate] = React.useState('');
   const [initialRecentEmails, setInitialRecentEmails] = React.useState<GmailSearchMessage[] | null>(null);
   const [initialRecentLoading, setInitialRecentLoading] = React.useState(false);
   const [selectedEmailForImport, setSelectedEmailForImport] = React.useState<GmailSearchMessage | null>(null);
@@ -474,11 +477,11 @@ function ImportFromCommunicationSection({
   const [noteError, setNoteError] = React.useState<string | null>(null);
   const debouncedEmailQuery = useDebouncedValue(emailSearchQuery.trim(), 400);
 
-  // Load latest emails on mount (no search query) so the results section is pre-populated.
+  // Load latest emails on mount and when date filter changes (no search query) so the results section is pre-populated.
   React.useEffect(() => {
     let cancelled = false;
     setInitialRecentLoading(true);
-    gmailSearchEmails('', 'all')
+    gmailSearchEmails('', 'all', emailSearchDate || undefined)
       .then((list) => {
         if (!cancelled) setInitialRecentEmails(list);
       })
@@ -489,7 +492,7 @@ function ImportFromCommunicationSection({
         if (!cancelled) setInitialRecentLoading(false);
       });
     return () => { cancelled = true; };
-  }, []);
+  }, [emailSearchDate]);
 
   // When there is no search query, show initial recent emails (filtered by All/Inbox/Sent).
   React.useEffect(() => {
@@ -498,18 +501,21 @@ function ImportFromCommunicationSection({
       return;
     }
     const haveFullCacheForQuery =
-      emailSearchFullCache !== null && emailSearchFullCacheQuery === debouncedEmailQuery;
+      emailSearchFullCache !== null &&
+      emailSearchFullCacheQuery === debouncedEmailQuery &&
+      emailSearchFullCacheDate === emailSearchDate;
     if (haveFullCacheForQuery) {
       setEmailSearchResults(filterMessagesByFolder(emailSearchFullCache, emailSearchFolder));
       return;
     }
     let cancelled = false;
     setEmailSearchLoading(true);
-    gmailSearchEmails(debouncedEmailQuery, 'all')
+    gmailSearchEmails(debouncedEmailQuery, 'all', emailSearchDate || undefined)
       .then((list) => {
         if (cancelled) return;
         setEmailSearchFullCache(list);
         setEmailSearchFullCacheQuery(debouncedEmailQuery);
+        setEmailSearchFullCacheDate(emailSearchDate);
         setEmailSearchResults(filterMessagesByFolder(list, emailSearchFolder));
       })
       .catch(() => {
@@ -517,13 +523,14 @@ function ImportFromCommunicationSection({
           setEmailSearchResults([]);
           setEmailSearchFullCache(null);
           setEmailSearchFullCacheQuery('');
+          setEmailSearchFullCacheDate('');
         }
       })
       .finally(() => {
         if (!cancelled) setEmailSearchLoading(false);
       });
     return () => { cancelled = true; };
-  }, [debouncedEmailQuery, emailSearchFolder, emailSearchFullCache, emailSearchFullCacheQuery, initialRecentEmails]);
+  }, [debouncedEmailQuery, emailSearchFolder, emailSearchDate, emailSearchFullCache, emailSearchFullCacheQuery, emailSearchFullCacheDate, initialRecentEmails]);
 
   const handleSelectEmailForImport = (msg: GmailSearchMessage) => {
     setSelectedEmailForImport(msg);
@@ -592,16 +599,32 @@ function ImportFromCommunicationSection({
             </Button>
           ))}
         </div>
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" aria-hidden />
-          <Input
-            type="search"
-            placeholder="Search email by keywords..."
-            value={emailSearchQuery}
-            onChange={(e) => setEmailSearchQuery(e.target.value)}
-            className="pl-9 h-9"
-            aria-label="Search Gmail"
-          />
+        <div className="flex gap-2 items-center">
+          <div className="relative flex-1 min-w-0">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" aria-hidden />
+            <Input
+              type="search"
+              placeholder="Search email by keywords..."
+              value={emailSearchQuery}
+              onChange={(e) => setEmailSearchQuery(e.target.value)}
+              className="pl-9 h-9"
+              aria-label="Search Gmail"
+            />
+          </div>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="outline" size="icon" className="h-9 w-9 shrink-0" aria-label="Filter by date" title="Show emails from this date">
+                <CalendarIcon className="h-4 w-4" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="end">
+              <Calendar
+                mode="single"
+                selected={emailSearchDate ? new Date(emailSearchDate + 'T00:00:00') : undefined}
+                onSelect={(d) => setEmailSearchDate(d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : '')}
+              />
+            </PopoverContent>
+          </Popover>
         </div>
         {extractLoading && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">

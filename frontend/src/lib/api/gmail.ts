@@ -50,8 +50,11 @@ export type GmailSearchFolder = 'all' | 'inbox' | 'sent';
 export async function gmailSearchEmails(
   query: string,
   folder: GmailSearchFolder = 'all',
+  filterDate?: string | null,
 ): Promise<GmailSearchMessage[]> {
-  const url = buildApiUrl('/api/v1/gmail/search', { q: query, folder });
+  const params: Record<string, string> = { q: query, folder };
+  if (filterDate && filterDate.trim()) params.date = filterDate.trim();
+  const url = buildApiUrl('/api/v1/gmail/search', params);
   const headers = await getAuthHeaders();
   const res = await fetch(url, { method: 'GET', headers });
   if (!res.ok) {

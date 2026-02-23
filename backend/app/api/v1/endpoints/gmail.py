@@ -4,8 +4,8 @@ Gmail API endpoints: test connection, search, get message, extract contact from 
 
 import base64
 import logging
-from datetime import datetime, timezone
-from typing import Any, Dict, List
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
@@ -95,16 +95,40 @@ async def gmail_test(
         )
 
 
+def _gmail_date_filter(date_str: Optional[str]) -> str:
+    """
+    Build Gmail search date filter for a single calendar day (YYYY-MM-DD).
+    Returns e.g. " after:2024/2/23 before:2024/2/24" or "" if invalid.
+    """
+    if not date_str or not date_str.strip():
+        return ""
+    try:
+        parts = date_str.strip().split("-")
+        if len(parts) != 3:
+            return ""
+        y, m, d = int(parts[0]), int(parts[1]), int(parts[2])
+        if y < 1990 or m < 1 or m > 12 or d < 1 or d > 31:
+            return ""
+        dt = date(y, m, d)
+        next_day = dt + timedelta(days=1)
+        # Gmail format: after:Y/M/D before:Y/M/D (no leading zeros required)
+        return f" after:{dt.year}/{dt.month}/{dt.day} before:{next_day.year}/{next_day.month}/{next_day.day}"
+    except (ValueError, TypeError):
+        return ""
+
+
 @router.get("/search")
 async def gmail_search(
     q: str = Query("", description="Gmail search query (keywords). Empty = return latest emails."),
     folder: str = Query("all", description="Search in: all, inbox, sent"),
+    date: Optional[str] = Query(None, description="Filter by date (YYYY-MM-DD). Only emails from this day are returned."),
     user_id: str = Depends(get_current_user_id),
     supabase: SupabaseService = Depends(get_supabase_service),
 ):
     """
     Search user's Gmail with the given query (Gmail search syntax).
     folder: all (default), inbox, or sent.
+    date: optional YYYY-MM-DD to restrict results to that calendar day.
     Returns list of messages with id, subject, from, to, snippet, date.
     """
     service = await get_gmail_client(user_id, supabase)
@@ -124,8 +148,12 @@ async def gmail_search(
             "userId": "me",
             "maxResults": 9,
         }
-        if q and q.strip():
-            list_kwargs["q"] = q.strip()
+        search_q = (q or "").strip()
+        date_filter = _gmail_date_filter(date)
+        if date_filter:
+            search_q = (search_q + date_filter).strip()
+        if search_q:
+            list_kwargs["q"] = search_q
         if label_ids is not None:
             list_kwargs["labelIds"] = label_ids
         results = service.users().messages().list(**list_kwargs).execute()
