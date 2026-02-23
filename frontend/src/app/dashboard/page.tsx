@@ -1093,7 +1093,7 @@ export default function DashboardPage(): React.ReactElement {
       {/* Responsive: mobile stack, tablet 2-col, desktop 12-col grid; only activity list scrolls on desktop */}
       <div className="flex-1 min-h-0 grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-12 lg:items-stretch">
         {/* Left panel - Activity cards (6 cols on desktop), only this section scrolls */}
-        <section className="flex flex-col min-h-0 lg:col-span-6 lg:flex-1 lg:overflow-hidden">
+        <section className="flex flex-col min-h-0 lg:col-span-6 lg:flex-1 lg:overflow-hidden rounded-lg bg-section border border-border p-4">
           {/* Activity search bar - search by title, contact, or company */}
           <div className="relative shrink-0 mb-3 w-full min-w-0">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" aria-hidden />
@@ -1279,8 +1279,8 @@ export default function DashboardPage(): React.ReactElement {
         </section>
 
         {/* Middle panel - Client notes (task notes) */}
-        <section className="flex flex-col min-h-0 lg:col-span-3 lg:flex-shrink-0 lg:overflow-hidden">
-          <Card className="h-full min-h-0 overflow-hidden flex flex-col">
+        <section className="flex flex-col min-h-0 lg:col-span-3 lg:flex-shrink-0 lg:overflow-hidden rounded-lg bg-section border border-border p-4">
+          <Card className="h-full min-h-0 overflow-hidden flex flex-col bg-card">
             <CardHeader className="pb-2 shrink-0">
               <h2 className="text-lg font-semibold flex items-center gap-2">
                 <FileText className="h-4 w-4 text-muted-foreground" />
@@ -1308,11 +1308,11 @@ export default function DashboardPage(): React.ReactElement {
         </section>
 
         {/* Right panel - Contact preview (full width on tablet below the 2 cols, 3 cols on desktop), fixed; scrolls internally if needed */}
-        <section className="flex flex-col min-h-0 md:col-span-2 lg:col-span-3 lg:flex-shrink-0 lg:overflow-hidden">
+        <section className="flex flex-col min-h-0 md:col-span-2 lg:col-span-3 lg:flex-shrink-0 lg:overflow-hidden rounded-lg bg-section border border-border p-4">
           {isLoading ? (
             <ContactPreviewSkeleton />
           ) : (
-            <Card className="h-full min-h-0 overflow-hidden flex flex-col">
+            <Card className="h-full min-h-0 overflow-hidden flex flex-col bg-card">
               <CardHeader className="pb-3 shrink-0">
                 <h2 className="text-lg font-semibold flex items-center gap-2">
                   <User className="h-4 w-4 text-muted-foreground" />

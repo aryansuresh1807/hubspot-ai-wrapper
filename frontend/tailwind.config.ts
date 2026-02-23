@@ -59,6 +59,8 @@ const config: Config = {
           page: '#f8fafc',
           muted: 'hsl(var(--background))',
         },
+        section: 'var(--color-section)',
+        surface: 'var(--color-section)',
         card: {
           DEFAULT: '#ffffff',
           foreground: '#1e293b',

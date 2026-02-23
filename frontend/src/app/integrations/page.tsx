@@ -301,7 +301,7 @@ export default function IntegrationsPage(): React.ReactElement {
       </header>
 
       {/* Integration Tiles */}
-      <section>
+      <section className="rounded-xl bg-section border border-border p-5">
         <h2 className="text-lg font-semibold mb-4">Services</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {tilesLoading ? (
@@ -359,7 +359,7 @@ export default function IntegrationsPage(): React.ReactElement {
       </section>
 
       {/* Connection Settings (collapsible per integration) */}
-      <section>
+      <section className="rounded-xl bg-section border border-border p-5">
         <h2 className="text-lg font-semibold mb-4">Connection Settings</h2>
         <div className="space-y-2">
           {INTEGRATIONS.map((int) => {
@@ -518,7 +518,7 @@ export default function IntegrationsPage(): React.ReactElement {
       </section>
 
       {/* Sync Log */}
-      <section>
+      <section className="rounded-xl bg-section border border-border p-5">
         <h2 className="text-lg font-semibold mb-4">Sync Log</h2>
         <Card>
           <CardContent className="p-0">

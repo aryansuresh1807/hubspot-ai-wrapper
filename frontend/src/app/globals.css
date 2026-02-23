@@ -29,6 +29,9 @@
     --color-status-at-risk: #ef4444;
 
     --color-background: #f8fafc;
+    /* Slightly darker than page background so sections/cards are clearly distinguishable */
+    --color-section: #f1f5f9;
+    --color-surface: #f1f5f9;
     --color-card: #ffffff;
     --color-card-foreground: #1e293b;
 
@@ -72,6 +75,8 @@
   .dark {
     --background: 222 47% 11%;
     --foreground: 210 40% 98%;
+    --color-section: #1e293b;
+    --color-surface: #1e293b;
     --card: 222 47% 14%;
     --card-foreground: 210 40% 98%;
     --popover: 222 47% 14%;

@@ -150,8 +150,9 @@ export default function SettingsPage(): React.ReactElement {
         </p>
       </header>
 
+      <div className="rounded-xl bg-section border border-border p-6 space-y-8">
       {/* AI Processing Preferences */}
-      <Card>
+      <Card className="bg-card">
         <CardHeader>
           <CardTitle className="text-base">AI Processing Preferences</CardTitle>
         </CardHeader>
@@ -217,7 +218,7 @@ export default function SettingsPage(): React.ReactElement {
       </Card>
 
       {/* Notification Settings */}
-      <Card>
+      <Card className="bg-card">
         <CardHeader>
           <CardTitle className="text-base">Notification Settings</CardTitle>
         </CardHeader>
@@ -283,7 +284,7 @@ export default function SettingsPage(): React.ReactElement {
       </Card>
 
       {/* Default Values */}
-      <Card>
+      <Card className="bg-card">
         <CardHeader>
           <CardTitle className="text-base">Default Values</CardTitle>
         </CardHeader>
@@ -355,7 +356,7 @@ export default function SettingsPage(): React.ReactElement {
       </Card>
 
       {/* Display Preferences */}
-      <Card>
+      <Card className="bg-card">
         <CardHeader>
           <CardTitle className="text-base">Display Preferences</CardTitle>
         </CardHeader>
@@ -430,7 +431,7 @@ export default function SettingsPage(): React.ReactElement {
       </Card>
 
       {/* Actions */}
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3 pt-2">
         <Button onClick={handleSave} disabled={!dirty} className="gap-2">
           {savedFeedback ? (
             <Check className="h-4 w-4" />
@@ -443,7 +444,7 @@ export default function SettingsPage(): React.ReactElement {
       </div>
 
       {/* Account / Sign out */}
-      <Card>
+      <Card className="bg-card">
         <CardHeader>
           <CardTitle className="text-base">Account</CardTitle>
           <p className="text-sm text-muted-foreground mt-1">
@@ -471,6 +472,7 @@ export default function SettingsPage(): React.ReactElement {
           </Button>
         </CardContent>
       </Card>
+      </div>
 
       {/* Reset confirmation */}
       <Dialog open={resetDialogOpen} onOpenChange={setResetDialogOpen}>
