@@ -10,6 +10,7 @@ import {
   Plus,
   ArrowUpDown,
   ClipboardList,
+  Search,
   SearchX,
   User,
   RefreshCw,
@@ -133,6 +134,17 @@ const AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const STALE_SYNC_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
 
 const PRIORITY_FILTER_OPTIONS: PriorityFilterOption[] = ['none', 'low', 'medium', 'high'];
+
+const ACTIVITY_SEARCH_DEBOUNCE_MS = 400;
+
+function useDebouncedValue<T>(value: T, delay: number): T {
+  const [debounced, setDebounced] = React.useState(value);
+  React.useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return debounced;
+}
 
 function isNetworkError(err: unknown): boolean {
   if (err instanceof TypeError && err.message === 'Failed to fetch') return true;
@@ -498,6 +510,7 @@ export default function DashboardPage(): React.ReactElement {
   const [datePickerValue, setDatePickerValue] = React.useState<string>(
     () => stored?.datePickerValue ?? getTodayDateString()
   );
+  const [activitySearchQuery, setActivitySearchQuery] = React.useState('');
   const [completingId, setCompletingId] = React.useState<string | null>(null);
   const [isSyncing, setIsSyncing] = React.useState(false);
   const [lastSyncedAt, setLastSyncedAt] = React.useState<number | null>(null);
@@ -577,16 +590,25 @@ export default function DashboardPage(): React.ReactElement {
     };
   }, [user, queryClient]);
 
-  // Activities from API (cached by React Query – instant when navigating back)
-  // When single-date picker is set, send only date so backend filters by that day; otherwise send date_from/date_to (range or "all tasks").
+  // Debounced search query for API (HubSpot keyword search; returns completed + not completed).
+  const debouncedSearchQuery = useDebouncedValue(activitySearchQuery.trim(), ACTIVITY_SEARCH_DEBOUNCE_MS);
+  const isSearchMode = !!debouncedSearchQuery;
+
+  // Activities from API (cached by React Query – instant when navigating back).
+  // When search is set: backend fetches from HubSpot by keyword (all statuses). Otherwise: date/range filters.
   const activitiesParams = React.useMemo(
-    () => ({
-      sort: sort as ActivitySortOption,
-      date: datePickerValue || undefined,
-      date_from: datePickerValue ? undefined : (filterApplied.dateFrom || undefined),
-      date_to: datePickerValue ? undefined : (filterApplied.dateTo || undefined),
-    }),
-    [sort, datePickerValue, filterApplied]
+    () => {
+      if (isSearchMode) {
+        return { sort: sort as ActivitySortOption, search: debouncedSearchQuery };
+      }
+      return {
+        sort: sort as ActivitySortOption,
+        date: datePickerValue || undefined,
+        date_from: datePickerValue ? undefined : (filterApplied.dateFrom || undefined),
+        date_to: datePickerValue ? undefined : (filterApplied.dateTo || undefined),
+      };
+    },
+    [sort, datePickerValue, filterApplied, isSearchMode, debouncedSearchQuery]
   );
 
   const activitiesQuery = useQuery({
@@ -675,7 +697,8 @@ export default function DashboardPage(): React.ReactElement {
 
   const filtered = React.useMemo(() => {
     return filteredByDate.filter((item) => {
-      if (completedIds.has(item.activity.id)) return false;
+      // In search mode (HubSpot keyword search) show all results including completed
+      if (!isSearchMode && completedIds.has(item.activity.id)) return false;
       const a = item.activity;
       if (filterApplied.priority.length > 0) {
         const taskPriority = a.priority ?? 'none';
@@ -685,12 +708,25 @@ export default function DashboardPage(): React.ReactElement {
         return false;
       return true;
     });
-  }, [filteredByDate, filterApplied, completedIds]);
+  }, [filteredByDate, filterApplied, completedIds, isSearchMode]);
 
   const sortedItems = React.useMemo(
     () => sortActivities(filtered, sort),
     [filtered, sort]
   );
+
+  /** List to display: when searching, API returns matches from HubSpot (already filtered); otherwise sorted list. */
+  const searchFilteredItems = sortedItems;
+
+  // When search filters out the selected activity, select first in results or clear
+  React.useEffect(() => {
+    if (searchFilteredItems.length === 0) {
+      setSelectedActivityId(null);
+      return;
+    }
+    if (selectedActivityId && searchFilteredItems.some((i) => i.activity.id === selectedActivityId)) return;
+    setSelectedActivityId(searchFilteredItems[0].activity.id);
+  }, [searchFilteredItems, selectedActivityId]);
 
   const selectedContact: ContactPreviewContact | null = selectedItem
     ? selectedItem.contact
@@ -719,8 +755,13 @@ export default function DashboardPage(): React.ReactElement {
       !!datePickerValue);
 
   const filterHintText = React.useMemo(() => {
-    if (isShowingAllTasks) return 'Showing all tasks';
+    const searchPart = activitySearchQuery.trim()
+      ? `Results for keyword "${activitySearchQuery.trim()}"`
+      : null;
+    if (searchPart && !hasActiveFilters && isShowingAllTasks) return searchPart;
+    if (isShowingAllTasks && !searchPart) return 'Showing all tasks';
     const parts: string[] = [];
+    if (searchPart) parts.push(searchPart);
     if (filterApplied.priority.length > 0) {
       const labels = filterApplied.priority.map((p) => p.charAt(0).toUpperCase() + p.slice(1));
       parts.push(`Priority: ${labels.join(', ')}`);
@@ -737,7 +778,7 @@ export default function DashboardPage(): React.ReactElement {
       );
     }
     return parts.length > 0 ? parts.join(' · ') : 'No filters applied';
-  }, [isShowingAllTasks, filterApplied.priority, filterApplied.dateFrom, filterApplied.dateTo, datePickerValue]);
+  }, [activitySearchQuery, isShowingAllTasks, hasActiveFilters, filterApplied.priority, filterApplied.dateFrom, filterApplied.dateTo, datePickerValue]);
 
   const handleApplyFilter = () => {
     setFilterApplied(filterDraft);
@@ -982,6 +1023,18 @@ export default function DashboardPage(): React.ReactElement {
       <div className="flex-1 min-h-0 grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-12 lg:items-stretch">
         {/* Left panel - Activity cards (6 cols on desktop), only this section scrolls */}
         <section className="flex flex-col min-h-0 lg:col-span-6 lg:flex-1 lg:overflow-hidden">
+          {/* Activity search bar - search by title, contact, or company */}
+          <div className="relative shrink-0 mb-3 w-full min-w-0">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" aria-hidden />
+            <Input
+              type="search"
+              placeholder="Search by title, contact, or company..."
+              value={activitySearchQuery}
+              onChange={(e) => setActivitySearchQuery(e.target.value)}
+              className="pl-9 h-9 w-full focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border focus-visible:border-ring"
+              aria-label="Search activities"
+            />
+          </div>
           <div className="flex flex-nowrap items-center gap-2 mb-4 shrink-0 w-full min-w-0">
             <Button
               variant="outline"
@@ -1107,33 +1160,39 @@ export default function DashboardPage(): React.ReactElement {
                   <ActivityCardSkeleton key={i} />
                 ))}
               </>
-            ) : sortedItems.length === 0 ? (
+            ) : searchFilteredItems.length === 0 ? (
               <Card className="border-dashed">
                 <CardContent className="p-0">
                   <EmptyState
-                    icon={hasActiveFilters || datePickerValue ? SearchX : ClipboardList}
+                    icon={activitySearchQuery.trim() ? SearchX : hasActiveFilters || datePickerValue ? SearchX : ClipboardList}
                     title={
-                      hasActiveFilters || datePickerValue
-                        ? 'No activities match your filters.'
-                        : 'No activities yet. Create your first activity!'
+                      activitySearchQuery.trim()
+                        ? `No activities match "${activitySearchQuery.trim()}".`
+                        : hasActiveFilters || datePickerValue
+                          ? 'No activities match your filters.'
+                          : 'No activities yet. Create your first activity!'
                     }
                     description={
-                      hasActiveFilters || datePickerValue
-                        ? 'Try adjusting or clearing filters to see more results.'
-                        : 'Add a note or activity to get started.'
+                      activitySearchQuery.trim()
+                        ? 'Try a different keyword (subject, contact name, or company).'
+                        : hasActiveFilters || datePickerValue
+                          ? 'Try adjusting or clearing filters to see more results.'
+                          : 'Add a note or activity to get started.'
                     }
                     action={
-                      hasActiveFilters || datePickerValue
-                        ? { label: 'Clear all filters', onClick: () => { handleClearAllFilters(); } }
-                        : isOffline
-                          ? { label: 'New Activity', onClick: () => showToast('warning', 'Working offline', 'Create and update are disabled until you\'re back online.') }
-                          : { label: 'New Activity', onClick: () => router.push('/activity') }
+                      activitySearchQuery.trim()
+                        ? { label: 'Clear search', onClick: () => setActivitySearchQuery('') }
+                        : hasActiveFilters || datePickerValue
+                          ? { label: 'Clear all filters', onClick: () => { handleClearAllFilters(); } }
+                          : isOffline
+                            ? { label: 'New Activity', onClick: () => showToast('warning', 'Working offline', 'Create and update are disabled until you\'re back online.') }
+                            : { label: 'New Activity', onClick: () => router.push('/activity') }
                     }
                   />
                 </CardContent>
               </Card>
             ) : (
-              sortedItems.map((item) => (
+              searchFilteredItems.map((item) => (
                 <ActivityCard
                   key={item.activity.id}
                   activity={item.activity}

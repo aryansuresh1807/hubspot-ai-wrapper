@@ -47,6 +47,7 @@ function buildActivitiesQueryString(params: ActivityQueryParams): string {
   if (params.date_from != null) search.set('date_from', params.date_from);
   if (params.date_to != null) search.set('date_to', params.date_to);
   if (params.sort != null) search.set('sort', params.sort);
+  if (params.search != null && params.search.trim()) search.set('search', params.search.trim());
   if (params.relationship_status?.length) {
     params.relationship_status.forEach((v) =>
       search.append('relationship_status', v)

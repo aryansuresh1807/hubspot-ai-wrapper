@@ -280,10 +280,11 @@ async def list_activities(
     date_from: str | None = Query(None, description="Start date for range (YYYY-MM-DD)"),
     date_to: str | None = Query(None, description="End date for range (YYYY-MM-DD)"),
     sort: ActivitySortOption = Query("date_newest", description="Sort option"),
+    search: str | None = Query(None, description="Search by keyword (subject, contact, company); fetches from HubSpot; returns completed and not completed"),
     supabase: SupabaseService = Depends(get_supabase_service),
     hubspot: HubSpotService = Depends(get_hubspot_service),
 ) -> ActivityListResponse:
-    """GET /api/v1/activities — list activities with cache and filters. Default: tasks due today."""
+    """GET /api/v1/activities — list activities with cache and filters. Default: tasks due today. Use search= to query HubSpot by keyword (all statuses)."""
     # Default date filter to today when no range specified (dashboard "today's tasks" view)
     effective_date = date
     if effective_date is None and date_from is None and date_to is None:
@@ -295,7 +296,63 @@ async def list_activities(
     try:
         activities: list[dict[str, Any]] = []
 
-        if date_from or date_to:
+        if search and search.strip():
+            # Keyword search: fetch from HubSpot (all statuses, completed + not completed)
+            search_results: list[dict[str, Any]] = []
+            after: str | None = None
+            while True:
+                resp = hubspot.search_tasks(
+                    query=search.strip(),
+                    limit=100,
+                    after=after,
+                )
+                results = resp.get("results") or []
+                search_results.extend(results)
+                paging = resp.get("paging") or {}
+                next_p = paging.get("next") or {}
+                after = next_p.get("after")
+                if not after or not results:
+                    break
+
+            task_ids = [r.get("id") for r in search_results if r.get("id")]
+            for i in range(0, len(task_ids), 100):
+                chunk = task_ids[i : i + 100]
+                try:
+                    full_tasks = hubspot.batch_read_tasks(
+                        chunk,
+                        associations=["contacts", "companies"],
+                    )
+                    for t in full_tasks:
+                        activities.append(_hubspot_task_to_activity(t))
+                except HubSpotServiceError:
+                    for r in search_results:
+                        if r.get("id") in chunk:
+                            activities.append(_hubspot_task_to_activity(r))
+
+            task_to_contacts: dict[str, list[str]] = {}
+            task_to_companies: dict[str, list[str]] = {}
+            for j in range(0, len(task_ids), 100):
+                chunk = task_ids[j : j + 100]
+                try:
+                    task_to_contacts.update(
+                        hubspot.batch_read_task_associations(chunk, "contacts")
+                    )
+                    task_to_companies.update(
+                        hubspot.batch_read_task_associations(chunk, "companies")
+                    )
+                except HubSpotServiceError:
+                    pass
+            for a in activities:
+                tid = a.get("id")
+                if not tid:
+                    continue
+                if tid in task_to_contacts:
+                    a["contact_ids"] = task_to_contacts[tid]
+                if tid in task_to_companies:
+                    a["company_ids"] = task_to_companies[tid]
+
+            # No date/status filter: return all matching tasks (completed + not completed)
+        elif date_from or date_to:
             # Query HubSpot directly for tasks in the date range (search_tasks)
             from_ms = _date_to_hubspot_ms(date_from or "", end_of_day=False)
             to_ms = _date_to_hubspot_ms(date_to or "", end_of_day=True) if date_to else None

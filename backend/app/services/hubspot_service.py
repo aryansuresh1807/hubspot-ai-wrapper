@@ -371,15 +371,17 @@ class HubSpotService:
         self,
         due_date_from_ms: int | None = None,
         due_date_to_ms: int | None = None,
+        query: str | None = None,
         limit: int = 100,
         after: str | None = None,
         properties: list[str] | None = None,
     ) -> dict[str, Any]:
         """
-        Search tasks by due date (hs_timestamp).
-        Use POST /crm/v3/objects/tasks/search with filterGroups.
+        Search tasks by due date (hs_timestamp) and/or by text query.
+        Use POST /crm/v3/objects/tasks/search. When query is set, HubSpot searches
+        task subject/body (and possibly related). Returns all statuses (completed + not completed).
         """
-        body: dict[str, Any] = {"limit": min(limit, 100)}
+        body: dict[str, Any] = {"limit": min(limit, 200), "sorts": []}
         if after is not None:
             body["after"] = after
         if properties:
@@ -404,8 +406,10 @@ class HubSpotService:
                 })
             if filters:
                 filter_groups.append({"filters": filters})
-        if filter_groups:
-            body["filterGroups"] = filter_groups
+        body["filterGroups"] = filter_groups if filter_groups else []
+
+        if query and query.strip():
+            body["query"] = query.strip()[:3000]
 
         try:
             data = self._request(

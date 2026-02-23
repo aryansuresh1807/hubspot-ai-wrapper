@@ -20,6 +20,8 @@ export interface ActivityQueryParams {
   date_from?: string; // YYYY-MM-DD
   date_to?: string; // YYYY-MM-DD
   sort?: ActivitySortOption;
+  /** Search by keyword (subject, contact, company); backend fetches from HubSpot; returns completed and not completed */
+  search?: string;
 }
 
 // -----------------------------------------------------------------------------
