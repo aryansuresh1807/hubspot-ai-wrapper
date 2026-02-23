@@ -58,8 +58,6 @@ import {
 } from '@/components/shared/contact-preview';
 import { Skeleton } from '@/components/shared/skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
-import type { RelationshipStatus } from '@/components/shared/status-chip';
-import type { ProcessingStatusType } from '@/components/shared/processing-status';
 import { cn, stripHtml } from '@/lib/utils';
 import {
   Tooltip,
@@ -112,9 +110,10 @@ export type SortOption =
   | 'priority_high_low'
   | 'priority_low_high';
 
+export type PriorityFilterOption = 'none' | 'low' | 'medium' | 'high';
+
 export interface FilterState {
-  relationshipStatus: RelationshipStatus[];
-  processingStatus: ProcessingStatusType[];
+  priority: PriorityFilterOption[];
   dateFrom: string;
   dateTo: string;
 }
@@ -133,13 +132,7 @@ interface ToastState {
 const AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const STALE_SYNC_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
 
-const RELATIONSHIP_OPTIONS: RelationshipStatus[] = [
-  'Active',
-  'Warm',
-  'Cooling',
-  'Dormant',
-  'At-Risk',
-];
+const PRIORITY_FILTER_OPTIONS: PriorityFilterOption[] = ['none', 'low', 'medium', 'high'];
 
 function isNetworkError(err: unknown): boolean {
   if (err instanceof TypeError && err.message === 'Failed to fetch') return true;
@@ -158,13 +151,6 @@ function formatLastSynced(ts: number | null): string {
   const hours = Math.floor(diffMins / 60);
   return hours === 1 ? '1 hour ago' : `${hours} hours ago`;
 }
-
-const PROCESSING_OPTIONS: ProcessingStatusType[] = [
-  'processing',
-  'awaiting_review',
-  'ready',
-  'error',
-];
 
 /** Map API DashboardActivity to UI DashboardActivityItem */
 function apiActivityToDashboardItem(api: DashboardActivity): DashboardActivityItem {
@@ -221,8 +207,7 @@ function apiActivityToDashboardItem(api: DashboardActivity): DashboardActivityIt
 /** Serialize local FilterState to API filter_state */
 function filterStateToApi(filter: FilterState): Record<string, unknown> {
   return {
-    relationshipStatus: filter.relationshipStatus,
-    processingStatus: filter.processingStatus,
+    priority: filter.priority,
     dateFrom: filter.dateFrom || undefined,
     dateTo: filter.dateTo || undefined,
   };
@@ -231,13 +216,13 @@ function filterStateToApi(filter: FilterState): Record<string, unknown> {
 /** Parse API filter_state to local FilterState */
 function filterStateFromApi(state: Record<string, unknown> | undefined): FilterState {
   if (!state) return DEFAULT_FILTER;
+  const priority = Array.isArray(state.priority)
+    ? (state.priority as PriorityFilterOption[]).filter((p) =>
+        PRIORITY_FILTER_OPTIONS.includes(p)
+      )
+    : [];
   return {
-    relationshipStatus: Array.isArray(state.relationshipStatus)
-      ? (state.relationshipStatus as RelationshipStatus[])
-      : [],
-    processingStatus: Array.isArray(state.processingStatus)
-      ? (state.processingStatus as ProcessingStatusType[])
-      : [],
+    priority,
     dateFrom: typeof state.dateFrom === 'string' ? state.dateFrom : '',
     dateTo: typeof state.dateTo === 'string' ? state.dateTo : '',
   };
@@ -386,8 +371,7 @@ function sortActivities(
 }
 
 const DEFAULT_FILTER: FilterState = {
-  relationshipStatus: [],
-  processingStatus: [],
+  priority: [],
   dateFrom: '',
   dateTo: '',
 };
@@ -601,8 +585,6 @@ export default function DashboardPage(): React.ReactElement {
       date: datePickerValue || undefined,
       date_from: datePickerValue ? undefined : (filterApplied.dateFrom || undefined),
       date_to: datePickerValue ? undefined : (filterApplied.dateTo || undefined),
-      relationship_status: filterApplied.relationshipStatus.length ? filterApplied.relationshipStatus : undefined,
-      processing_status: filterApplied.processingStatus.length ? filterApplied.processingStatus : undefined,
     }),
     [sort, datePickerValue, filterApplied]
   );
@@ -695,16 +677,10 @@ export default function DashboardPage(): React.ReactElement {
     return filteredByDate.filter((item) => {
       if (completedIds.has(item.activity.id)) return false;
       const a = item.activity;
-      if (
-        filterApplied.relationshipStatus.length > 0 &&
-        !filterApplied.relationshipStatus.includes(a.relationshipStatus)
-      )
-        return false;
-      if (
-        filterApplied.processingStatus.length > 0 &&
-        !filterApplied.processingStatus.includes(a.processingStatus as ProcessingStatusType)
-      )
-        return false;
+      if (filterApplied.priority.length > 0) {
+        const taskPriority = a.priority ?? 'none';
+        if (!filterApplied.priority.includes(taskPriority)) return false;
+      }
       if (!isDateInRange(a.lastTouchDate, filterApplied.dateFrom, filterApplied.dateTo))
         return false;
       return true;
@@ -723,8 +699,7 @@ export default function DashboardPage(): React.ReactElement {
   const isShowingAllTasks =
     filterApplied.dateFrom === ALL_TASKS_DATE_FROM &&
     filterApplied.dateTo === ALL_TASKS_DATE_TO &&
-    filterApplied.relationshipStatus.length === 0 &&
-    filterApplied.processingStatus.length === 0;
+    filterApplied.priority.length === 0;
 
   /** Date Newest / Date Oldest are only available when showing all tasks (no date filter). */
   const dateSortsAllowed = isShowingAllTasks;
@@ -738,11 +713,31 @@ export default function DashboardPage(): React.ReactElement {
 
   const hasActiveFilters =
     !isShowingAllTasks &&
-    (filterApplied.relationshipStatus.length > 0 ||
-      filterApplied.processingStatus.length > 0 ||
+    (filterApplied.priority.length > 0 ||
       !!filterApplied.dateFrom ||
       !!filterApplied.dateTo ||
       !!datePickerValue);
+
+  const filterHintText = React.useMemo(() => {
+    if (isShowingAllTasks) return 'Showing all tasks';
+    const parts: string[] = [];
+    if (filterApplied.priority.length > 0) {
+      const labels = filterApplied.priority.map((p) => p.charAt(0).toUpperCase() + p.slice(1));
+      parts.push(`Priority: ${labels.join(', ')}`);
+    }
+    if (datePickerValue) {
+      parts.push(`Date: ${format(new Date(datePickerValue + 'T00:00:00'), 'dd MMM yyyy')}`);
+    } else if (
+      filterApplied.dateFrom &&
+      filterApplied.dateTo &&
+      (filterApplied.dateFrom !== ALL_TASKS_DATE_FROM || filterApplied.dateTo !== ALL_TASKS_DATE_TO)
+    ) {
+      parts.push(
+        `Date range: ${format(new Date(filterApplied.dateFrom + 'T00:00:00'), 'dd MMM yyyy')} – ${format(new Date(filterApplied.dateTo + 'T00:00:00'), 'dd MMM yyyy')}`
+      );
+    }
+    return parts.length > 0 ? parts.join(' · ') : 'No filters applied';
+  }, [isShowingAllTasks, filterApplied.priority, filterApplied.dateFrom, filterApplied.dateTo, datePickerValue]);
 
   const handleApplyFilter = () => {
     setFilterApplied(filterDraft);
@@ -890,49 +885,25 @@ export default function DashboardPage(): React.ReactElement {
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
-              <Label>Relationship Status</Label>
+              <Label>Priority</Label>
               <div className="flex flex-wrap gap-3">
-                {RELATIONSHIP_OPTIONS.map((status) => (
+                {PRIORITY_FILTER_OPTIONS.map((p) => (
                   <label
-                    key={status}
+                    key={p}
                     className="flex items-center gap-2 text-sm cursor-pointer"
                   >
                     <Checkbox
-                      checked={filterDraft.relationshipStatus.includes(status)}
+                      checked={filterDraft.priority.includes(p)}
                       onCheckedChange={(checked) =>
                         setFilterDraft((prev) => ({
                           ...prev,
-                          relationshipStatus: checked
-                            ? [...prev.relationshipStatus, status]
-                            : prev.relationshipStatus.filter((s) => s !== status),
+                          priority: checked
+                            ? [...prev.priority, p]
+                            : prev.priority.filter((x) => x !== p),
                         }))
                       }
                     />
-                    {status}
-                  </label>
-                ))}
-              </div>
-            </div>
-            <div className="grid gap-2">
-              <Label>Processing Status</Label>
-              <div className="flex flex-wrap gap-3">
-                {PROCESSING_OPTIONS.map((status) => (
-                  <label
-                    key={status}
-                    className="flex items-center gap-2 text-sm cursor-pointer"
-                  >
-                    <Checkbox
-                      checked={filterDraft.processingStatus.includes(status)}
-                      onCheckedChange={(checked) =>
-                        setFilterDraft((prev) => ({
-                          ...prev,
-                          processingStatus: checked
-                            ? [...prev.processingStatus, status]
-                            : prev.processingStatus.filter((s) => s !== status),
-                        }))
-                      }
-                    />
-                    {status.replace('_', ' ')}
+                    {p.charAt(0).toUpperCase() + p.slice(1)}
                   </label>
                 ))}
               </div>
@@ -1126,6 +1097,9 @@ export default function DashboardPage(): React.ReactElement {
               </Button>
             )}
           </div>
+          <p className="text-sm text-muted-foreground shrink-0 mb-1 px-0.5" aria-live="polite">
+            {filterHintText}
+          </p>
           <div className="flex-1 min-h-0 overflow-y-auto space-y-3 pr-2">
             {isLoading ? (
               <>
