@@ -287,17 +287,15 @@ Respond with ONLY a JSON object:
 
 def extract_metadata(latest_note: str, previous_notes: str = "") -> dict:
     """
-    Extract subject (task title), next steps, questions raised, and urgency from the latest note.
+    Extract subject (task title), questions raised, and urgency from the latest note.
     Uses previous notes only for context when present.
     """
     if not latest_note or not latest_note.strip():
         return {
             "subject": "",
-            "next_steps": "",
             "questions_raised": "",
             "urgency": "medium",
             "subject_confidence": 0,
-            "next_steps_confidence": 0,
             "questions_confidence": 0,
         }
     client = _get_client()
@@ -313,16 +311,14 @@ def extract_metadata(latest_note: str, previous_notes: str = "") -> dict:
 
 1. **subject** (string): A single, short task title for the upcoming task (e.g. "Follow-up call with Jane", "Send Q4 proposal", "Review contract"). One phrase, title case. This is the task title in the CRM.
 
-2. **next_steps** (string): Concrete next steps for the upcoming task. Use bullet points (each line starting with "- ") or comma-separated items. Include who does what and by when if stated (e.g. "Send proposal by Wednesday; schedule follow-up call").
+2. **questions_raised** (string): Any open questions the contact raised or that remain unanswered. Empty string if none.
 
-3. **questions_raised** (string): Any open questions the contact raised or that remain unanswered. Empty string if none.
+3. **urgency** (string): Exactly one of "low", "medium", "high". Use "high" for time-sensitive or commitment-heavy notes; "medium" for normal follow-ups; "low" for informational or casual notes.
 
-4. **urgency** (string): Exactly one of "low", "medium", "high". Use "high" for time-sensitive or commitment-heavy notes; "medium" for normal follow-ups; "low" for informational or casual notes.
-
-5. **subject_confidence**, **next_steps_confidence**, **questions_confidence** (integers 0-100): How confident you are in each extraction. 85+ when explicit in the note; 50-84 when inferred; below 50 when vague.
+4. **subject_confidence**, **questions_confidence** (integers 0-100): How confident you are in each extraction. 85+ when explicit in the note; 50-84 when inferred; below 50 when vague.
 
 **Output format (JSON only):**
-{{"subject": "...", "next_steps": "...", "questions_raised": "...", "urgency": "low"|"medium"|"high", "subject_confidence": number, "next_steps_confidence": number, "questions_confidence": number}}
+{{"subject": "...", "questions_raised": "...", "urgency": "low"|"medium"|"high", "subject_confidence": number, "questions_confidence": number}}
 """
     try:
         msg = client.messages.create(
@@ -339,22 +335,18 @@ def extract_metadata(latest_note: str, previous_notes: str = "") -> dict:
                     urgency = "medium"
                 return {
                     "subject": (parsed.get("subject") or "").strip() or "Follow-up",
-                    "next_steps": (parsed.get("next_steps") or "").strip(),
                     "questions_raised": (parsed.get("questions_raised") or "").strip(),
                     "urgency": urgency,
                     "subject_confidence": min(100, max(0, int(parsed.get("subject_confidence", 70)))),
-                    "next_steps_confidence": min(100, max(0, int(parsed.get("next_steps_confidence", 70)))),
                     "questions_confidence": min(100, max(0, int(parsed.get("questions_confidence", 70)))),
                 }
     except Exception as e:
         logger.exception("Claude extract_metadata error: %s", e)
     return {
         "subject": "Follow-up",
-        "next_steps": "",
         "questions_raised": "",
         "urgency": "medium",
         "subject_confidence": 50,
-        "next_steps_confidence": 50,
         "questions_confidence": 50,
     }
 

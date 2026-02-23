@@ -134,11 +134,9 @@ class RecommendedTouchDateOut(BaseModel):
 
 class ExtractedMetadataOut(BaseModel):
     subject: str = ""
-    next_steps: str = ""
     questions_raised: str = ""
     urgency: Literal["low", "medium", "high"] = "medium"
     subject_confidence: int = 0
-    next_steps_confidence: int = 0
     questions_confidence: int = 0
 
 

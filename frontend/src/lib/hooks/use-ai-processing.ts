@@ -26,7 +26,6 @@ export interface ProcessNotesResult {
   extractedDueDate: string | null;
   extractedRelationship: RelationshipStatus | null;
   subjectConfidence: number;
-  nextStepsConfidence: number;
   questionsConfidence: number;
   keyPoints: string[];
 }
@@ -58,7 +57,6 @@ export function useProcessNotes(): {
               extractedDueDate: mock.extractedDueDate,
               extractedRelationship: mock.extractedRelationship,
               subjectConfidence: mock.subjectConfidence,
-              nextStepsConfidence: mock.nextStepsConfidence,
               questionsConfidence: mock.questionsConfidence,
               keyPoints: mock.keyPoints,
             }
@@ -67,7 +65,6 @@ export function useProcessNotes(): {
               extractedDueDate: null,
               extractedRelationship: null,
               subjectConfidence: 75,
-              nextStepsConfidence: 70,
               questionsConfidence: 65,
               keyPoints: ['Follow-up needed', 'Review timeline'],
             };

@@ -58,7 +58,6 @@ export interface MockActivity {
   relationshipStatus: RelationshipStatus;
   opportunityPercentage: number;
   processingStatus: ProcessingStatusType;
-  nextSteps: string;
   questionsRaised: string;
   urgencyLevel: UrgencyLevel;
 }
@@ -85,7 +84,6 @@ export interface MockAIProcessingResult {
   extractedDueDate: string | null;
   extractedRelationship: RelationshipStatus | null;
   subjectConfidence: number;
-  nextStepsConfidence: number;
   questionsConfidence: number;
   keyPoints: string[];
 }
@@ -221,7 +219,6 @@ export const mockActivities: MockActivity[] = Array.from({ length: 35 }, (_, i) 
     relationshipStatus: contact.relationshipStatus,
     opportunityPercentage: 30 + (i % 70),
     processingStatus: pick(processingStatuses, i),
-    nextSteps: 'Send proposal draft. Schedule follow-up call.',
     questionsRaised: 'Implementation timeline and support SLA.',
     urgencyLevel: pick(urgencies, i),
   };
@@ -261,7 +258,6 @@ export const mockAIProcessingResults: Record<string, MockAIProcessingResult> = {
     extractedDueDate: new Date(now + 7 * day).toISOString().slice(0, 10),
     extractedRelationship: 'Active',
     subjectConfidence: 92,
-    nextStepsConfidence: 88,
     questionsConfidence: 65,
     keyPoints: ['Interested in Enterprise tier', 'Decision maker', 'Q1 close target'],
   },
@@ -270,7 +266,6 @@ export const mockAIProcessingResults: Record<string, MockAIProcessingResult> = {
     extractedDueDate: new Date(now + 14 * day).toISOString().slice(0, 10),
     extractedRelationship: 'Warm',
     subjectConfidence: 90,
-    nextStepsConfidence: 82,
     questionsConfidence: 78,
     keyPoints: ['Renewal likely', 'EMEA expansion under discussion'],
   },
@@ -279,7 +274,6 @@ export const mockAIProcessingResults: Record<string, MockAIProcessingResult> = {
     extractedDueDate: new Date(now + 7 * day).toISOString().slice(0, 10),
     extractedRelationship: 'Cooling',
     subjectConfidence: 75,
-    nextStepsConfidence: 68,
     questionsConfidence: 55,
     keyPoints: ['New lead', 'Evaluating 3 vendors'],
   },

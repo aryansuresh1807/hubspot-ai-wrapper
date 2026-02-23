@@ -160,10 +160,8 @@ interface ActivityDraftStored {
   recognisedDate: { date: string | null; label: string | null; confidence: number };
   recommendedTouch: { date: string; label: string; rationale: string } | null;
   urgency: UrgencyLevel;
-  nextSteps: string;
   questionsRaised: string;
   subjectConfidence: number;
-  nextStepsConfidence: number;
   questionsConfidence: number;
   selectedDraftTone: DraftTone;
   drafts: Record<string, { text: string; confidence: number }>;
@@ -213,8 +211,6 @@ const MOCK_AI_SUMMARY =
 const MOCK_EXTRACTED = {
   subject: 'Q1 follow-up and proposal review',
   subjectConfidence: 92,
-  nextSteps: 'Send proposal draft by Wednesday; schedule follow-up call.',
-  nextStepsConfidence: 88,
   questionsRaised: 'Implementation timeline and support SLA details.',
   questionsRaisedConfidence: 65,
 };
@@ -883,10 +879,8 @@ function ActivityPageContent(): React.ReactElement {
   const [recommendedTouch, setRecommendedTouch] = React.useState<{ date: string; label: string; rationale: string } | null>(null);
   const [urgency, setUrgency] = React.useState<UrgencyLevel>('none');
   const [subject, setSubject] = React.useState('');
-  const [nextSteps, setNextSteps] = React.useState('');
   const [questionsRaised, setQuestionsRaised] = React.useState('');
   const [subjectConfidence, setSubjectConfidence] = React.useState(0);
-  const [nextStepsConfidence, setNextStepsConfidence] = React.useState(0);
   const [questionsConfidence, setQuestionsConfidence] = React.useState(0);
   const [selectedDraftTone, setSelectedDraftTone] = React.useState<DraftTone>('original');
   const [drafts, setDrafts] = React.useState<Record<string, { text: string; confidence: number }>>(MOCK_DRAFTS);
@@ -929,10 +923,8 @@ function ActivityPageContent(): React.ReactElement {
     setRecognisedDate(stored.recognisedDate ?? { date: null, label: null, confidence: 0 });
     setRecommendedTouch(stored.recommendedTouch ?? null);
     setUrgency(stored.urgency ?? 'none');
-    setNextSteps(stored.nextSteps ?? '');
     setQuestionsRaised(stored.questionsRaised ?? '');
     setSubjectConfidence(stored.subjectConfidence ?? 0);
-    setNextStepsConfidence(stored.nextStepsConfidence ?? 0);
     setQuestionsConfidence(stored.questionsConfidence ?? 0);
     setSelectedDraftTone(stored.selectedDraftTone ?? 'original');
     setDrafts(stored.drafts ?? MOCK_DRAFTS);
@@ -1107,10 +1099,8 @@ function ActivityPageContent(): React.ReactElement {
       recognisedDate,
       recommendedTouch,
       urgency,
-      nextSteps,
       questionsRaised,
       subjectConfidence,
-      nextStepsConfidence,
       questionsConfidence,
       selectedDraftTone,
       drafts,
@@ -1141,10 +1131,8 @@ function ActivityPageContent(): React.ReactElement {
     recognisedDate,
     recommendedTouch,
     urgency,
-    nextSteps,
     questionsRaised,
     subjectConfidence,
-    nextStepsConfidence,
     questionsConfidence,
     selectedDraftTone,
     drafts,
@@ -1309,11 +1297,9 @@ function ActivityPageContent(): React.ReactElement {
       });
       setRecommendedTouch(res.recommended_touch_date ?? null);
       setSubject(res.metadata.subject);
-      setNextSteps(res.metadata.next_steps);
       setQuestionsRaised(res.metadata.questions_raised);
       setUrgency(res.metadata.urgency);
       setSubjectConfidence(res.metadata.subject_confidence);
-      setNextStepsConfidence(res.metadata.next_steps_confidence);
       setQuestionsConfidence(res.metadata.questions_confidence);
       const draftMap: Record<string, { text: string; confidence: number }> = {};
       const userDraft = draftSentForProcessingRef.current;
@@ -1877,18 +1863,6 @@ function ActivityPageContent(): React.ReactElement {
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
                 className="mt-2"
-              />
-            </div>
-            <div>
-              <Label className="flex items-center gap-2">
-                Next Steps
-                {nextStepsConfidence > 0 && <ConfidenceBadge value={nextStepsConfidence} />}
-              </Label>
-              <Textarea
-                value={nextSteps}
-                onChange={(e) => setNextSteps(e.target.value)}
-                className="mt-2"
-                rows={2}
               />
             </div>
             <div>

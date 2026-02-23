@@ -1057,11 +1057,9 @@ async def process_draft(
             ),
             metadata=ExtractedMetadataOut(
                 subject=metadata["subject"],
-                next_steps=metadata["next_steps"],
                 questions_raised=metadata["questions_raised"],
                 urgency=metadata["urgency"],
                 subject_confidence=metadata["subject_confidence"],
-                next_steps_confidence=metadata["next_steps_confidence"],
                 questions_confidence=metadata["questions_confidence"],
             ),
             drafts=drafts_out,
@@ -1138,11 +1136,9 @@ async def process_notes(
             ),
             metadata=ExtractedMetadataOut(
                 subject=metadata["subject"],
-                next_steps=metadata["next_steps"],
                 questions_raised=metadata["questions_raised"],
                 urgency=metadata["urgency"],
                 subject_confidence=metadata["subject_confidence"],
-                next_steps_confidence=metadata["next_steps_confidence"],
                 questions_confidence=metadata["questions_confidence"],
             ),
             drafts=drafts_out,

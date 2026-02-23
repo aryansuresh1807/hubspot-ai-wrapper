@@ -197,11 +197,9 @@ export interface RecommendedTouchDateOut {
 
 export interface ExtractedMetadataOut {
   subject: string;
-  next_steps: string;
   questions_raised: string;
   urgency: 'low' | 'medium' | 'high';
   subject_confidence: number;
-  next_steps_confidence: number;
   questions_confidence: number;
 }
 
