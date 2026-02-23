@@ -503,9 +503,6 @@ function ContactSearchPanel(): React.ReactElement {
           className="pl-9"
           aria-label="Search contacts"
         />
-        {isSearching && (
-          <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" aria-hidden />
-        )}
       </div>
 
       {/* Results */}
@@ -848,9 +845,6 @@ function ImportFromCommunicationColumn({
                 className="pl-9"
                 aria-label="Search Gmail"
               />
-              {(emailSearchLoading || (!debouncedEmailQuery && initialRecentLoading)) && (
-                <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" aria-hidden />
-              )}
             </div>
             {extractLoading && (
               <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
@@ -858,7 +852,13 @@ function ImportFromCommunicationColumn({
                 Analysing email...
               </div>
             )}
-            {!extractLoading && emailSearchResults.length > 0 && (
+            {!extractLoading && (emailSearchLoading || (!debouncedEmailQuery && initialRecentLoading)) && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground py-2 border border-border rounded-md px-3">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Searching...
+              </div>
+            )}
+            {!extractLoading && !(emailSearchLoading || (!debouncedEmailQuery && initialRecentLoading)) && emailSearchResults.length > 0 && (
               <ul
                 className="border border-border rounded-md divide-y divide-border max-h-[320px] overflow-y-auto"
                 aria-label="Email search results"

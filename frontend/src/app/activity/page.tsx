@@ -602,9 +602,6 @@ function ImportFromCommunicationSection({
             className="pl-9 h-9"
             aria-label="Search Gmail"
           />
-          {(emailSearchLoading || (!debouncedEmailQuery && initialRecentLoading)) && (
-            <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" aria-hidden />
-          )}
         </div>
         {extractLoading && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
@@ -612,7 +609,13 @@ function ImportFromCommunicationSection({
             Analysing email...
           </div>
         )}
-        {!extractLoading && emailSearchResults.length > 0 && (
+        {!extractLoading && (emailSearchLoading || (!debouncedEmailQuery && initialRecentLoading)) && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground py-1 border border-border rounded-md px-3">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            Searching...
+          </div>
+        )}
+        {!extractLoading && !(emailSearchLoading || (!debouncedEmailQuery && initialRecentLoading)) && emailSearchResults.length > 0 && (
           <ul
             className="border border-border rounded-md divide-y divide-border max-h-[200px] overflow-y-auto"
             aria-label="Email search results"
