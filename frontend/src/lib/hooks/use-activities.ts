@@ -8,8 +8,6 @@ import {
 } from '@/lib/store/activity-store';
 import type { MockActivity } from '@/lib/mock-data';
 
-const RELATIONSHIP_ORDER = ['Active', 'Warm', 'Cooling', 'Dormant', 'At-Risk'] as const;
-
 function isDateInRange(iso: string, from: string, to: string): boolean {
   const t = new Date(iso).getTime();
   if (from && t < new Date(from + 'T00:00:00').getTime()) return false;
@@ -37,17 +35,14 @@ function sortActivities(
           new Date(b.lastTouchDate).getTime()
       );
       break;
-    case 'opportunity_pct':
     case 'priority_high_low':
       copy.sort(
         (a, b) => b.opportunityPercentage - a.opportunityPercentage
       );
       break;
-    case 'relationship_status':
+    case 'priority_low_high':
       copy.sort(
-        (a, b) =>
-          RELATIONSHIP_ORDER.indexOf(a.relationshipStatus as (typeof RELATIONSHIP_ORDER)[number]) -
-          RELATIONSHIP_ORDER.indexOf(b.relationshipStatus as (typeof RELATIONSHIP_ORDER)[number])
+        (a, b) => a.opportunityPercentage - b.opportunityPercentage
       );
       break;
     default:

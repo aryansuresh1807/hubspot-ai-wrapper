@@ -187,7 +187,9 @@ def _apply_sort(activities: list[dict[str, Any]], sort: ActivitySortOption) -> l
         if sort == "priority_high_low":
             p = key_priority.get((a.get("_priority") or "").upper(), 0)
             return (-p, (a.get("due_date") or datetime.min.replace(tzinfo=timezone.utc)).timestamp() if a.get("due_date") else 0)
-        # opportunity_pct, relationship_status: stable order
+        if sort == "priority_low_high":
+            p = key_priority.get((a.get("_priority") or "").upper(), 0)
+            return (p, (a.get("due_date") or datetime.min.replace(tzinfo=timezone.utc)).timestamp() if a.get("due_date") else 0)
         return (0, a.get("id", ""))
 
     return sorted(activities, key=sort_key)

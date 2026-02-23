@@ -10,8 +10,7 @@ export type ActivitySortOption =
   | 'date_newest'
   | 'date_oldest'
   | 'priority_high_low'
-  | 'opportunity_pct'
-  | 'relationship_status';
+  | 'priority_low_high';
 
 export interface ActivityFilters {
   relationshipStatus: RelationshipStatus[];

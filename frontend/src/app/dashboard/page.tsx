@@ -6,6 +6,7 @@ import ProtectedRoute from '@/components/ProtectedRoute';
 import { useRouter } from 'next/navigation';
 import {
   Filter,
+  FilterX,
   Plus,
   ArrowUpDown,
   ClipboardList,
@@ -109,8 +110,7 @@ export type SortOption =
   | 'date_newest'
   | 'date_oldest'
   | 'priority_high_low'
-  | 'opportunity_pct'
-  | 'relationship_status';
+  | 'priority_low_high';
 
 export interface FilterState {
   relationshipStatus: RelationshipStatus[];
@@ -336,21 +336,14 @@ function isDateInRange(iso: string, from: string, to: string): boolean {
   return true;
 }
 
-const SORT_OPTIONS: { value: SortOption; label: string }[] = [
-  { value: 'date_newest', label: 'Date Newest' },
-  { value: 'date_oldest', label: 'Date Oldest' },
+const SORT_OPTIONS: { value: SortOption; label: string; dateOnly?: boolean }[] = [
+  { value: 'date_newest', label: 'Date Newest', dateOnly: true },
+  { value: 'date_oldest', label: 'Date Oldest', dateOnly: true },
   { value: 'priority_high_low', label: 'Priority High to Low' },
-  { value: 'opportunity_pct', label: 'Opportunity %' },
-  { value: 'relationship_status', label: 'Relationship Status' },
+  { value: 'priority_low_high', label: 'Priority Low to High' },
 ];
 
-const RELATIONSHIP_ORDER: RelationshipStatus[] = [
-  'Active',
-  'Warm',
-  'Cooling',
-  'Dormant',
-  'At-Risk',
-];
+const PRIORITY_ORDER: Record<string, number> = { high: 3, medium: 2, low: 1, none: 0 };
 
 function sortActivities(
   items: DashboardActivityItem[],
@@ -372,18 +365,18 @@ function sortActivities(
           new Date(b.activity.lastTouchDate).getTime()
       );
       break;
-    case 'opportunity_pct':
     case 'priority_high_low':
       copy.sort(
         (a, b) =>
-          b.activity.opportunityPercentage - a.activity.opportunityPercentage
+          (PRIORITY_ORDER[b.activity.priority ?? 'none'] ?? 0) -
+          (PRIORITY_ORDER[a.activity.priority ?? 'none'] ?? 0)
       );
       break;
-    case 'relationship_status':
+    case 'priority_low_high':
       copy.sort(
         (a, b) =>
-          RELATIONSHIP_ORDER.indexOf(a.activity.relationshipStatus) -
-          RELATIONSHIP_ORDER.indexOf(b.activity.relationshipStatus)
+          (PRIORITY_ORDER[a.activity.priority ?? 'none'] ?? 0) -
+          (PRIORITY_ORDER[b.activity.priority ?? 'none'] ?? 0)
       );
       break;
     default:
@@ -398,6 +391,10 @@ const DEFAULT_FILTER: FilterState = {
   dateFrom: '',
   dateTo: '',
 };
+
+/** Date range used to fetch all tasks (no date filter). */
+const ALL_TASKS_DATE_FROM = '1970-01-01';
+const ALL_TASKS_DATE_TO = '2099-12-31';
 
 /** Today as YYYY-MM-DD (local date) for default activity list filter. */
 function getTodayDateString(): string {
@@ -597,12 +594,13 @@ export default function DashboardPage(): React.ReactElement {
   }, [user, queryClient]);
 
   // Activities from API (cached by React Query – instant when navigating back)
+  // When single-date picker is set, send only date so backend filters by that day; otherwise send date_from/date_to (range or "all tasks").
   const activitiesParams = React.useMemo(
     () => ({
       sort: sort as ActivitySortOption,
       date: datePickerValue || undefined,
-      date_from: filterApplied.dateFrom || undefined,
-      date_to: filterApplied.dateTo || undefined,
+      date_from: datePickerValue ? undefined : (filterApplied.dateFrom || undefined),
+      date_to: datePickerValue ? undefined : (filterApplied.dateTo || undefined),
       relationship_status: filterApplied.relationshipStatus.length ? filterApplied.relationshipStatus : undefined,
       processing_status: filterApplied.processingStatus.length ? filterApplied.processingStatus : undefined,
     }),
@@ -722,11 +720,29 @@ export default function DashboardPage(): React.ReactElement {
     ? selectedItem.contact
     : null;
 
+  const isShowingAllTasks =
+    filterApplied.dateFrom === ALL_TASKS_DATE_FROM &&
+    filterApplied.dateTo === ALL_TASKS_DATE_TO &&
+    filterApplied.relationshipStatus.length === 0 &&
+    filterApplied.processingStatus.length === 0;
+
+  /** Date Newest / Date Oldest are only available when showing all tasks (no date filter). */
+  const dateSortsAllowed = isShowingAllTasks;
+
+  // When a date filter is applied and current sort is a date sort, switch to priority
+  React.useEffect(() => {
+    if (!dateSortsAllowed && (sort === 'date_newest' || sort === 'date_oldest')) {
+      setSort('priority_high_low');
+    }
+  }, [dateSortsAllowed, sort]);
+
   const hasActiveFilters =
-    filterApplied.relationshipStatus.length > 0 ||
-    filterApplied.processingStatus.length > 0 ||
-    !!filterApplied.dateFrom ||
-    !!filterApplied.dateTo;
+    !isShowingAllTasks &&
+    (filterApplied.relationshipStatus.length > 0 ||
+      filterApplied.processingStatus.length > 0 ||
+      !!filterApplied.dateFrom ||
+      !!filterApplied.dateTo ||
+      !!datePickerValue);
 
   const handleApplyFilter = () => {
     setFilterApplied(filterDraft);
@@ -737,6 +753,18 @@ export default function DashboardPage(): React.ReactElement {
   const handleClearFilter = () => {
     setFilterDraft(DEFAULT_FILTER);
     setFilterApplied(DEFAULT_FILTER);
+  };
+
+  const handleClearAllFilters = () => {
+    const showAllFilter = {
+      ...DEFAULT_FILTER,
+      dateFrom: ALL_TASKS_DATE_FROM,
+      dateTo: ALL_TASKS_DATE_TO,
+    };
+    setFilterDraft(showAllFilter);
+    setFilterApplied(showAllFilter);
+    setDatePickerValue('');
+    setFilterDialogOpen(false);
   };
 
   const handleOpen = React.useCallback(
@@ -983,11 +1011,11 @@ export default function DashboardPage(): React.ReactElement {
       <div className="flex-1 min-h-0 grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-12 lg:items-stretch">
         {/* Left panel - Activity cards (6 cols on desktop), only this section scrolls */}
         <section className="flex flex-col min-h-0 lg:col-span-6 lg:flex-1 lg:overflow-hidden">
-          <div className="flex flex-wrap items-center gap-2 mb-4 shrink-0">
+          <div className="flex flex-nowrap items-center gap-2 mb-4 shrink-0 w-full min-w-0">
             <Button
               variant="outline"
-              size="icon"
-              className={cn('h-9 w-9', hasActiveFilters && 'border-status-active bg-status-active/10')}
+              size="sm"
+              className={cn('h-9 w-9 min-w-9 p-0 shrink-0', hasActiveFilters && 'border-status-active bg-status-active/10')}
               aria-label="Filter"
               onClick={() => setFilterDialogOpen(true)}
             >
@@ -997,13 +1025,16 @@ export default function DashboardPage(): React.ReactElement {
               <PopoverTrigger asChild>
                 <Button
                   variant="outline"
-                  className="h-9 w-[160px] justify-start text-left font-normal"
+                  size="sm"
+                  className="h-9 min-w-[7rem] justify-start text-left font-normal"
                   aria-label="Filter by date"
                 >
                   <CalendarIcon className="mr-2 h-4 w-4 shrink-0" />
-                  {datePickerValue
-                    ? format(new Date(datePickerValue + 'T00:00:00'), 'dd MMM yyyy')
-                    : 'Pick a date'}
+                  <span className="truncate">
+                    {datePickerValue
+                      ? format(new Date(datePickerValue + 'T00:00:00'), 'dd MMM yyyy')
+                      : 'Pick a date'}
+                  </span>
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-auto p-0" align="start">
@@ -1015,25 +1046,49 @@ export default function DashboardPage(): React.ReactElement {
               </PopoverContent>
             </Popover>
             <Select value={sort} onValueChange={(v) => setSort(v as SortOption)}>
-              <SelectTrigger className="w-[200px] h-9">
+              <SelectTrigger className="h-9 min-w-[7rem] focus:ring-0 focus:ring-offset-0">
                 <ArrowUpDown className="h-4 w-4 opacity-50 mr-1 shrink-0" aria-hidden />
                 <SelectValue placeholder="Sort by" />
               </SelectTrigger>
               <SelectContent>
                 {SORT_OPTIONS.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value}>
+                  <SelectItem
+                    key={opt.value}
+                    value={opt.value}
+                    disabled={opt.dateOnly ? !dateSortsAllowed : undefined}
+                  >
                     {opt.label}
+                    {opt.dateOnly && !dateSortsAllowed ? ' (all tasks only)' : ''}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
             <Tooltip>
               <TooltipTrigger asChild>
-                <span className={cn('inline-flex', isOffline && 'cursor-not-allowed')}>
+                <span className="inline-flex h-9 items-center shrink-0">
                   <Button
                     variant="outline"
                     size="sm"
-                    className="h-9 gap-1.5"
+                    className="h-9 gap-1.5 shrink-0"
+                    onClick={handleClearAllFilters}
+                    aria-label="Clear all filters and show all tasks"
+                  >
+                    <FilterX className="h-4 w-4" />
+                    Clear all filters
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                Clear date and filters, then load all tasks from HubSpot (any date, completed or not).
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className={cn('inline-flex h-9 items-center shrink-0', isOffline && 'cursor-not-allowed')}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-9 gap-1.5 shrink-0"
                     onClick={handleRefresh}
                     disabled={isSyncing || isLoading || isOffline}
                     aria-label="Sync activities from HubSpot"
@@ -1049,11 +1104,12 @@ export default function DashboardPage(): React.ReactElement {
                   : 'Sync activities from HubSpot.'}
               </TooltipContent>
             </Tooltip>
+            <div className="flex-1 min-w-0" aria-hidden />
             {isOffline ? (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <span className="inline-flex">
-                    <Button variant="default" className="ml-auto h-9 gap-1" disabled aria-hidden>
+                  <span className="inline-flex h-9 items-center shrink-0">
+                    <Button variant="default" size="sm" className="h-9 gap-1" disabled aria-hidden>
                       <Plus className="h-4 w-4" />
                       New Activity
                     </Button>
@@ -1062,9 +1118,9 @@ export default function DashboardPage(): React.ReactElement {
                 <TooltipContent>Create and update are disabled while offline.</TooltipContent>
               </Tooltip>
             ) : (
-              <Button asChild className="ml-auto h-9">
-                <Link href="/activity">
-                  <Plus className="h-4 w-4 mr-1" />
+              <Button asChild variant="default" size="sm" className="h-9 gap-1 shrink-0">
+                <Link href="/activity" className="inline-flex h-9 items-center gap-1">
+                  <Plus className="h-4 w-4" />
                   New Activity
                 </Link>
               </Button>
@@ -1094,7 +1150,7 @@ export default function DashboardPage(): React.ReactElement {
                     }
                     action={
                       hasActiveFilters || datePickerValue
-                        ? { label: 'Clear filters', onClick: () => { handleClearFilter(); setFilterDialogOpen(false); } }
+                        ? { label: 'Clear all filters', onClick: () => { handleClearAllFilters(); } }
                         : isOffline
                           ? { label: 'New Activity', onClick: () => showToast('warning', 'Working offline', 'Create and update are disabled until you\'re back online.') }
                           : { label: 'New Activity', onClick: () => router.push('/activity') }
